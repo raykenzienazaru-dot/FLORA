@@ -63,6 +63,8 @@ export function useDeviceControl({
           setMovementStatus('right_command_sent');
         } else if (command === 'S') {
           setMovementStatus('stop_command_sent');
+        } else if (command === 'C') {
+          setMovementStatus('capture_command_sent');
         }
 
         setLastCommand(command);

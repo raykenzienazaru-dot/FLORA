@@ -42,6 +42,12 @@ export const ManualDeviceControl: React.FC<ManualDeviceControlProps> = ({
           classes: 'bg-[#FEF7E8] text-[#8A570C] border-[#FDE3B5]',
           dot: 'bg-[#D97706]',
         };
+      case 'capture_command_sent':
+        return {
+          text: 'CAMERA CAPTURE REQUEST SENT',
+          classes: 'bg-[#E0F2FE] text-[#075985] border-[#BAE6FD]',
+          dot: 'bg-[#0284C7]',
+        };
       case 'sending':
         return {
           text: 'DISPATCHING TO MQTT...',
@@ -98,7 +104,7 @@ export const ManualDeviceControl: React.FC<ManualDeviceControlProps> = ({
       </p>
 
       {/* Control Buttons Trio */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         {/* Move Left */}
         <button
           onClick={() => sendCommand('L')}
@@ -153,6 +159,16 @@ export const ManualDeviceControl: React.FC<ManualDeviceControlProps> = ({
             </span>
           )}
         </button>
+
+        <button
+          onClick={() => sendCommand('C')}
+          disabled={isSending}
+          className="py-3 px-4 rounded-xl font-bold text-xs transition-all flex items-center justify-center gap-2 border shadow-xs bg-[#E0F2FE] hover:bg-[#BAE6FD] text-[#075985] border-[#BAE6FD] disabled:opacity-50 cursor-pointer"
+          title="Request a new ESP32-CAM scan and photo"
+        >
+          <span>◉</span>
+          <span>Capture Photo</span>
+        </button>
       </div>
 
       {/* Hardware Telemetry & Safety Status */}
@@ -193,7 +209,7 @@ export const ManualDeviceControl: React.FC<ManualDeviceControlProps> = ({
 
       <div className="mt-4 pt-3 border-t border-[#E4EBE0]">
         <p className="text-[11px] text-[#617253] m-0 leading-relaxed">
-          Perintah gerak dipublikasikan ke broker MQTT topik <code className="bg-[#F4F7F2] px-1.5 py-0.5 rounded border border-[#E4EBE0] font-mono text-[10px] text-[#1B2408]">grenvis/device/control</code>.
+          Perintah <code className="bg-[#F4F7F2] px-1.5 py-0.5 rounded border border-[#E4EBE0] font-mono text-[10px] text-[#1B2408]">L/R/S</code> menggerakkan L298N; <code className="bg-[#F4F7F2] px-1.5 py-0.5 rounded border border-[#E4EBE0] font-mono text-[10px] text-[#1B2408]">C</code> meminta ESP32-CAM mengambil foto melalui MQTT → ESP-NOW.
         </p>
       </div>
     </section>

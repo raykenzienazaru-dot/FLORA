@@ -346,6 +346,14 @@ export const HistoryTrendsSection: React.FC<HistoryTrendsSectionProps> = ({ hist
                   {fmt(hoveredPoint.record.temperature)} °C
                 </span>
               </div>
+              <div className="pt-1.5 mt-1.5 border-t border-[#2C3B0E] flex justify-between items-center">
+                <span className="text-[#C3D883]">Sensor model:</span>
+                <span className="font-bold text-white">{hoveredPoint.record.sensor_risk || 'Unknown'}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className="text-[#C3D883]">ESP32-CAM:</span>
+                <span className="font-bold text-white">{hoveredPoint.record.vision_prediction || 'Waiting'}</span>
+              </div>
               <div className="flex justify-between items-center">
                 <span className="text-[#F0F4E8] flex items-center gap-1.5">
                   <span className="w-2 h-2 rounded-full bg-[#0284C7]" />

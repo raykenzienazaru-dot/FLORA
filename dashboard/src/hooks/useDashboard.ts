@@ -7,8 +7,9 @@ import {
   WateringEvent,
 } from '../types/dashboard';
 import { getDashboardState, createWateringEvent } from '../services/api';
-import { useWebSocket } from './useWebSocket';
 import { evaluateSystemAlert } from '../utils/sensorRules';
+import { deviceMqtt } from '../services/deviceMqtt';
+import { appendLocalTelemetry, mergeLatestLocalTelemetry, summarizeLocalHistory } from '../services/localHistory';
 
 interface UseDashboardReturn {
   data: DashboardState | null;
@@ -55,7 +56,7 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
     }
   }, [onToast]);
 
-  const handleWebSocketMessage = useCallback(
+  const handleMqttMessage = useCallback(
     (msg: WebSocketMessage) => {
       if (!msg) return;
 
@@ -76,15 +77,29 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
           }
           prevSeverityRef.current = newAlert.severity;
 
+          const history = appendLocalTelemetry(msg.data);
           return {
             ...prev,
             latest: msg.data,
-            history: [...prev.history.slice(-287), msg.data],
+            history,
+            summary: summarizeLocalHistory(history, prev.wateringEvents.length),
             lastTelemetryAt: msg.data.timestamp,
           };
         });
       } else if (msg.type === 'mqtt' && msg.data) {
         setData((prev) => (prev ? { ...prev, mqtt: msg.data } : prev));
+      } else if (msg.type === 'vision') {
+        setData((prev) => {
+          if (!prev?.latest) return prev;
+          const latest = { ...prev.latest, ...msg.data, vision_connected: true, timestamp: prev.latest.timestamp };
+          const history = mergeLatestLocalTelemetry(latest);
+          return { ...prev, latest, history, summary: summarizeLocalHistory(history, prev.wateringEvents.length) };
+        });
+      } else if (msg.type === 'image') {
+        setData((prev) => prev?.latest ? {
+          ...prev,
+          latest: { ...prev.latest, ...msg.data },
+        } : prev);
       } else if (msg.type === 'watering') {
         loadData();
       }
@@ -92,9 +107,16 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
     [loadData, onToast]
   );
 
-  const { wsStatus, channelStatusText } = useWebSocket({
-    onMessage: handleWebSocketMessage,
-  });
+  const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
+  const channelStatusText = wsStatus === 'connected' ? 'MQTT channel ready' : 'Connecting to MQTT';
+
+  useEffect(() => {
+    deviceMqtt.start();
+    return deviceMqtt.subscribe((message) => {
+      if (message.type === 'mqtt') setWsStatus(message.data === 'CONNECTED' ? 'connected' : message.data === 'RECONNECTING' ? 'connecting' : 'disconnected');
+      handleMqttMessage(message);
+    });
+  }, [handleMqttMessage]);
 
   // Centralized Realtime System State Evaluation (Rules 1-6)
   const systemStatus: SystemStatusInfo = useMemo(() => {
@@ -251,8 +273,6 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
 
   useEffect(() => {
     loadData();
-    const interval = setInterval(loadData, 20000);
-    return () => clearInterval(interval);
   }, [loadData]);
 
   return {

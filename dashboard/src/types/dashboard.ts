@@ -148,16 +148,19 @@ export interface DashboardState {
 
 export type WebSocketMessage =
   | { type: 'telemetry'; data: TelemetryRecord }
+  | { type: 'vision'; data: Partial<TelemetryRecord> }
+  | { type: 'image'; data: Pick<TelemetryRecord, 'image_url' | 'image_timestamp'> }
   | { type: 'watering'; data: WateringEvent }
   | { type: 'mqtt'; data: MqttStatus };
 
-export type DeviceCommand = 'L' | 'R' | 'S';
+export type DeviceCommand = 'L' | 'R' | 'S' | 'C';
 
 export type DeviceMovementStatus =
   | 'idle'
   | 'left_command_sent'
   | 'right_command_sent'
   | 'stop_command_sent'
+  | 'capture_command_sent'
   | 'sending'
   | 'error';
 
