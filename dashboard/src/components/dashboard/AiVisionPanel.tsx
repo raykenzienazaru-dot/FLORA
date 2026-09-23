@@ -40,18 +40,17 @@ export const AiVisionPanel: React.FC<AiVisionPanelProps> = ({ latest }) => {
         <div className="flex justify-between items-start mb-4">
           <div>
             <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
-              Edge Computer Vision · ESP32-CAM
+              Software AI Vision Engine · Camera Stream
             </span>
             <h2 className="text-base font-bold text-[#1B2408] font-display mt-0.5">
               AI Vision Foliage Analysis
             </h2>
           </div>
           <span
-            className={`text-xs font-semibold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${
-              isConnected
+            className={`text-xs font-semibold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${isConnected
                 ? 'bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]'
                 : 'bg-[#F4F7F2] text-[#617253] border-[#E4EBE0]'
-            }`}
+              }`}
           >
             <span className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-[#597C00]' : 'bg-[#617253]'}`} />
             {isConnected ? 'ESP-NOW Active' : 'ESP-NOW Standby'}
@@ -134,7 +133,7 @@ export const AiVisionPanel: React.FC<AiVisionPanelProps> = ({ latest }) => {
       {/* Non-diagnostic Agronomic Disclaimer */}
       <div className="mt-4 pt-3 border-t border-[#E4EBE0]">
         <p className="text-[11px] text-[#617253] leading-relaxed m-0">
-          Deteksi visual berfungsi sebagai peringatan dini lapangan untuk kanopi daun dan bukan diagnosis agronomis mutlak.
+          Klasifikasi visual diproses berdasarkan fitur model <code className="text-[#597C00] font-mono text-[10px]">AI_VISION_INT8</code> (fitur kelas: Healthy, Powdery Mildew, Leaf Rust) untuk pemantauan dini kesehatan kanopi daun.
         </p>
       </div>
     </section>

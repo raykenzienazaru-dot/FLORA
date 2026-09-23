@@ -8,6 +8,7 @@ import {
 } from '../types/dashboard';
 import { getDashboardState, createWateringEvent } from '../services/api';
 import { evaluateSystemAlert } from '../utils/sensorRules';
+import { useWebSocket } from './useWebSocket';
 import { deviceMqtt } from '../services/deviceMqtt';
 import { appendLocalTelemetry, mergeLatestLocalTelemetry, summarizeLocalHistory } from '../services/localHistory';
 
@@ -107,16 +108,38 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
     [loadData, onToast]
   );
 
-  const [wsStatus, setWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
-  const channelStatusText = wsStatus === 'connected' ? 'MQTT channel ready' : 'Connecting to MQTT';
+  const { wsStatus: liveWsStatus } = useWebSocket({
+    onMessage: handleMqttMessage,
+  });
+
+  const [deviceWsStatus, setDeviceWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
   useEffect(() => {
+    if (liveWsStatus === 'connected') return;
+
     deviceMqtt.start();
     return deviceMqtt.subscribe((message) => {
-      if (message.type === 'mqtt') setWsStatus(message.data === 'CONNECTED' ? 'connected' : message.data === 'RECONNECTING' ? 'connecting' : 'disconnected');
+      if (message.type === 'mqtt') {
+        setDeviceWsStatus(
+          message.data === 'CONNECTED'
+            ? 'connected'
+            : message.data === 'RECONNECTING'
+            ? 'connecting'
+            : 'disconnected'
+        );
+      }
       handleMqttMessage(message);
     });
-  }, [handleMqttMessage]);
+  }, [handleMqttMessage, liveWsStatus]);
+
+  const wsStatus: 'connecting' | 'connected' | 'disconnected' =
+    liveWsStatus === 'connected' || deviceWsStatus === 'connected'
+      ? 'connected'
+      : liveWsStatus === 'connecting' || deviceWsStatus === 'connecting'
+      ? 'connecting'
+      : 'disconnected';
+
+  const channelStatusText = wsStatus === 'connected' ? 'MQTT channel ready' : 'Connecting to MQTT';
 
   // Centralized Realtime System State Evaluation (Rules 1-6)
   const systemStatus: SystemStatusInfo = useMemo(() => {
@@ -273,6 +296,8 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
 
   useEffect(() => {
     loadData();
+    const interval = setInterval(loadData, 4000);
+    return () => clearInterval(interval);
   }, [loadData]);
 
   return {

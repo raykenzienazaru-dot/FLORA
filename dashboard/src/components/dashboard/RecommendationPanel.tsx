@@ -21,9 +21,12 @@ export const RecommendationPanel: React.FC<RecommendationPanelProps> = ({ latest
 
   const priority = getPriorityBadge();
 
-  // Contextual human-crafted recommendations based on actual data
+  // Contextual actions from Software AI Condition Engine or fallback
   const getActionList = () => {
-    if (!latest) return ['Waiting for live telemetry stream from ESP32.'];
+    if (!latest) return ['Menunggu aliran data telemetri dari sensor ESP32.'];
+    if (latest.condition?.actions && latest.condition.actions.length > 0) {
+      return latest.condition.actions;
+    }
 
     const actions: string[] = [];
     const s = Number(latest.soil_moisture);
@@ -31,26 +34,25 @@ export const RecommendationPanel: React.FC<RecommendationPanelProps> = ({ latest
     const v = (latest.vision_prediction || '').toLowerCase();
 
     if (s < 20) {
-      actions.push('Kadar air tanah kritis (<20%): Lakukan penyiraman manual secukupnya segera.');
+      actions.push('Kekeringan Kritis (<20%): Lakukan penyiraman darurat secara bertahap.');
     } else if (s < 30) {
-      actions.push('Tanah mulai mengering (<30%): Cek fisik media tanam dan lakukan penyiraman ringan.');
+      actions.push('Tanah mulai mengering (<30%): Periksa kelembapan tanah dan jadwalkan penyiraman.');
     } else if (s > 80) {
-      actions.push('Tanah jenuh air (>80%): Tunda penyiraman berikutnya untuk mencegah busuk akar.');
+      actions.push('Tanah jenuh air (>80%): Tunda penyiraman dan periksa drainase pot.');
     }
 
     if (t >= 35) {
-      actions.push('Suhu udara tinggi (≥35°C): Berikan naungan tambahan atau tingkatkan sirkulasi udara.');
+      actions.push('Suhu udara tinggi (≥35°C): Berikan naungan tambahan atau tingkatkan ventilasi.');
     }
 
     if (v.includes('rust')) {
-      actions.push('Indikasi Rust: Periksa permukaan bawah daun dan hindari membasahi daun saat menyiram.');
+      actions.push('Indikasi Karat Daun: Pangkas daun bergejala, hindari membasahi daun, gunakan fungisida tembaga.');
     } else if (v.includes('powdery')) {
-      actions.push('Indikasi Powdery: Pangkas daun bergejala parah dan pastikan aliran udara sekitar kanopi lancar.');
+      actions.push('Indikasi Embun Tepung: Tingkatkan sirkulasi udara, semprotkan fungisida organik baking soda / neem.');
     }
 
     if (actions.length === 0) {
-      actions.push('Kondisi tanaman dan tanah saat ini optimal. Tidak diperlukan tindakan khusus.');
-      actions.push('Lanjutkan pemantauan telemetri rutin.');
+      actions.push('Kondisi tanaman dan iklim mikro optimal. Pertahankan jadwal pemeliharaan rutin.');
     }
 
     return actions;

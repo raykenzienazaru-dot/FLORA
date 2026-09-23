@@ -23,6 +23,8 @@ export interface TelemetryRecord {
   vision_powdery: number;
   vision_rust: number;
   vision_prediction?: string;
+  vision_confidence?: number;
+  vision_scan?: number;
   image_url?: string | null;
   image_path?: string | null;
   image_timestamp?: string | null;

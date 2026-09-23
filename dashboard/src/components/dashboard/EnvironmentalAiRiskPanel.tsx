@@ -55,9 +55,14 @@ export const EnvironmentalAiRiskPanel: React.FC<EnvironmentalAiRiskPanelProps> =
         {/* Header */}
         <div className="flex justify-between items-start mb-4">
           <div>
-            <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
-              On-Device Microclimate Model
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
+                Software AI Microclimate Engine
+              </span>
+              <span className="text-[9px] font-semibold bg-[#EAF4E8] text-[#22531A] px-2 py-0.5 rounded-full border border-[#C4E1BF]">
+                0% HW Load
+              </span>
+            </div>
             <h2 className="text-base font-bold text-[#1B2408] font-display mt-0.5">
               Microclimate Disease Risk Analysis
             </h2>
@@ -157,7 +162,7 @@ export const EnvironmentalAiRiskPanel: React.FC<EnvironmentalAiRiskPanelProps> =
       {/* Scientific Context Disclaimer */}
       <div className="mt-4 pt-3 border-t border-[#E4EBE0]">
         <p className="text-[11px] text-[#617253] leading-relaxed m-0">
-          Evaluasi mikroklimat dihasilkan on-device oleh model TFLite ESP32 sebagai sistem pendukung keputusan agronomis.
+          Evaluasi risiko mikroklimat dihitung oleh model Neural Network <code className="text-[#597C00] font-mono text-[10px]">grenvis_sensor_model</code> (fitur input: suhu, kelembapan udara, kelembapan tanah) sebagai sistem pendukung keputusan agronomis.
         </p>
       </div>
     </section>

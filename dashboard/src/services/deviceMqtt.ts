@@ -26,53 +26,18 @@ function parseJson(payload: Uint8Array): Record<string, unknown> | null {
   }
 }
 
-/** Fill the UI-only fields that were previously calculated by Express. */
-function normalizeTelemetry(payload: Record<string, unknown>): TelemetryRecord {
-  const soil = Number(payload.soil_moisture ?? 0);
-  const temperature = Number(payload.temperature ?? 0);
-  const humidity = Number(payload.humidity ?? 0);
-  const prediction = String(payload.vision_prediction ?? 'Awaiting inference');
-  const condition = prediction.toLowerCase().includes('rust')
-    ? 'Possible Rust Indication'
-    : prediction.toLowerCase().includes('powdery')
-    ? 'Possible Powdery Mildew Indication'
-    : 'Healthy / Stable';
-  const priority = soil < 20 || String(payload.sensor_risk).toLowerCase() === 'high' ? 'HIGH' : soil < 30 ? 'MEDIUM' : 'LOW';
+import { enrichWithSoftwareAi } from './softwareAi';
 
+/** Enrich raw hardware sensor telemetry using Software AI (Neural Network + Condition Protocols). */
+function normalizeTelemetry(payload: Record<string, unknown>): TelemetryRecord {
+  const enriched = enrichWithSoftwareAi(payload);
   return {
-    ...payload,
-    timestamp: typeof payload.timestamp === 'string' ? payload.timestamp : new Date().toISOString(),
-    temperature,
-    humidity,
-    soil_moisture: soil,
-    vision_healthy: Number(payload.vision_healthy ?? 0),
-    vision_powdery: Number(payload.vision_powdery ?? 0),
-    vision_rust: Number(payload.vision_rust ?? 0),
-    vision_connected: Boolean(payload.vision_connected),
-    vision_prediction: prediction,
+    ...enriched,
     image_url: imageUrl,
     esp32_mac: String(payload.esp32_mac ?? FLORA_DEVICE.mainMac),
     esp32cam_mac: String(payload.esp32cam_mac ?? FLORA_DEVICE.cameraMac),
     wifi_channel: Number(payload.wifi_channel ?? FLORA_DEVICE.wifiChannel),
-    temperature_status: temperature >= 35 ? 'HIGH' : 'NORMAL',
-    humidity_status: humidity > 80 ? 'HIGH' : humidity < 45 ? 'LOW' : 'NORMAL',
-    soil_status: soil < 30 ? 'DRY' : soil > 80 ? 'WET' : 'NORMAL',
-    dry_since: null,
-    dry_duration_minutes: 0,
-    consecutive_dry_readings: 0,
-    watering_status: soil < 20 ? 'URGENT_CHECK' : soil < 30 ? 'WATERING_RECOMMENDED' : soil > 80 ? 'TOO_WET' : 'NO_WATERING',
-    watering_priority: priority,
-    watering_description: soil < 20 ? 'Kelembapan tanah sangat rendah; lakukan pemeriksaan dan penyiraman.' : soil < 30 ? 'Kelembapan tanah rendah; pertimbangkan penyiraman.' : soil > 80 ? 'Media tanam terlalu basah; tunda penyiraman.' : 'Kelembapan tanah masih mencukupi.',
-    next_check_time: new Date(Date.now() + 30 * 60_000).toISOString(),
-    condition: {
-      title: condition,
-      description: 'Evaluasi dibuat dari telemetri langsung perangkat FLORA.',
-      factors: [],
-      actions: [],
-      priority,
-      recommended_inspection: 'Periksa daun dan media tanam secara langsung bila ada peringatan.',
-    },
-  } as TelemetryRecord;
+  };
 }
 
 export const deviceMqtt = {
@@ -110,7 +75,32 @@ export const deviceMqtt = {
       const message = parseJson(payload);
       if (!message) return;
       if (topic === FLORA_DEVICE.mqtt.topics.vision) {
-        emit({ type: 'vision', data: message as Partial<TelemetryRecord> });
+        const raw = message as Record<string, unknown>;
+        const pred = String(raw.vision_prediction ?? raw.prediction ?? 'Unknown');
+        const condition = pred.toLowerCase().includes('rust')
+          ? 'Possible Rust Indication'
+          : pred.toLowerCase().includes('powdery')
+          ? 'Possible Powdery Mildew Indication'
+          : 'Healthy / Stable';
+
+        const visionRecord: Partial<TelemetryRecord> = {
+          vision_scan: Number(raw.vision_scan ?? raw.scan ?? 0),
+          vision_prediction: pred,
+          vision_confidence: Number(raw.vision_confidence ?? raw.confidence ?? 0),
+          vision_healthy: Number(raw.vision_healthy ?? raw.healthy ?? 0),
+          vision_powdery: Number(raw.vision_powdery ?? raw.powdery ?? 0),
+          vision_rust: Number(raw.vision_rust ?? raw.rust ?? 0),
+          vision_connected: true,
+          condition: {
+            title: condition,
+            description: `Hasil inferensi AI Vision: ${pred}`,
+            factors: [],
+            actions: [],
+            priority: pred.toLowerCase() === 'healthy' ? 'LOW' : 'MEDIUM',
+            recommended_inspection: 'Lakukan pemeriksaan visual daun secara berkala.',
+          },
+        };
+        emit({ type: 'vision', data: visionRecord });
         return;
       }
       emit({ type: 'telemetry', data: normalizeTelemetry(message) });
@@ -118,7 +108,9 @@ export const deviceMqtt = {
   },
   subscribe(listener: Listener) {
     listeners.add(listener);
-    listener({ type: 'mqtt', data: mqttStatus });
+    if (mqttStatus === 'CONNECTED') {
+      listener({ type: 'mqtt', data: mqttStatus });
+    }
     return () => { listeners.delete(listener); };
   },
   publish(command: DeviceCommand) {

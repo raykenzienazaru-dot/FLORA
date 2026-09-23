@@ -4,11 +4,7 @@
 
 #include <esp_now.h>
 #include <esp_wifi.h>
-
-#include <ArduTFLite.h>
 #include <DHT.h>
-
-#include "grenvis_sensor_model.h"
 
 // ======================================================
 // WIFI
@@ -82,79 +78,26 @@ PubSubClient mqttClient(secureClient);
 DHT dht(DHT_PIN, DHT_TYPE);
 
 // ======================================================
-// SOIL CALIBRATION
+// SOIL CALIBRATION (Capacitive Soil Moisture Sensor v1.2)
 // ======================================================
 
-// Nanti kalibrasi ulang setelah kita lihat RAW sensor.
-//
-// Biasanya:
-// RAW besar = kering
-// RAW kecil = basah
+// Karakteristik Capacitive v1.2 pada ESP32 (VCC 3.3V, ADC 12-bit 0-4095):
+// RAW besar = KERING (di udara terbuka) -> biasanya ~2800 - 3300
+// RAW kecil = BASAH (dicelupkan air)   -> biasanya ~1200 - 1500
+// Anda bisa cek nilai "Soil RAW" di Serial Monitor untuk kalibrasi presisi.
 
-#define SOIL_DRY 4095
-#define SOIL_WET 1200
+#define SOIL_DRY 3100
+#define SOIL_WET 1350
 
 float soilMoisture = 0.0;
 int soilRaw = 0;
 
 // ======================================================
-// STANDARD SCALER
-//
-// Input:
-// 0 = Temperature
-// 1 = Humidity
-// 2 = Soil Moisture
-// ======================================================
-
-const float MEAN[3] = {
-  28.62221905,
-  59.83464446,
-  67.15121274
-};
-
-const float STD_SCALE[3] = {
-  4.90833472,
-  14.30678582,
-  17.56037094
-};
-
-// ======================================================
-// SENSOR AI CLASSES
-//
-// 0 = High
-// 1 = Low
-// 2 = Moderate
-// ======================================================
-
-const char* CLASS_NAMES[3] = {
-  "High",
-  "Low",
-  "Moderate"
-};
-
-// ======================================================
-// TENSOR ARENA
-// ======================================================
-
-constexpr int TENSOR_ARENA_SIZE =
-  12 * 1024;
-
-byte tensorArena[TENSOR_ARENA_SIZE];
-
-// ======================================================
-// SENSOR / AI DATA
+// SENSOR DATA (RAW & PROCESSED BY HARDWARE)
 // ======================================================
 
 float currentTemperature = 0;
 float currentHumidity = 0;
-
-float highProbability = 0;
-float lowProbability = 0;
-float moderateProbability = 0;
-
-String currentRisk = "Unknown";
-
-float currentConfidence = 0;
 
 // ======================================================
 // MOTOR STATE
@@ -274,6 +217,9 @@ float visionHealthy = 0;
 float visionPowdery = 0;
 float visionRust = 0;
 
+volatile bool newVisionReady = false;
+volatile bool newImageReady = false;
+
 // ======================================================
 // IMAGE BUFFER
 // ======================================================
@@ -293,13 +239,16 @@ bool imageReady = false;
 uint32_t lastPublishedImageScan = 0;
 
 // ======================================================
-// MQTT TIMER
+// SENSOR MONITORING & MQTT TIMER (2 - 5 DETIK)
 // ======================================================
 
 unsigned long lastPublish = 0;
 
+// Interval sampling sensor & update web: 3000 ms (3 detik)
+// Sangat optimal untuk DHT22 (minimal jeda 2 detik) & kapasitif tanah v1.2,
+// serta menjaga respon rel motor dan limit switch tetap cepat.
 const unsigned long PUBLISH_INTERVAL =
-  5000;
+  3000;
 
 // ======================================================
 // MAC FORMAT
@@ -425,7 +374,17 @@ void motorLeft() {
 }
 
 // ======================================================
-// LIMIT SAFETY
+// TRIGGER CAMERA CAPTURE (ESP-NOW)
+// ======================================================
+
+void triggerCameraCapture() {
+  const uint8_t request[] = { PACKET_CAPTURE_REQUEST };
+  const esp_err_t result = esp_now_send(ESP32_CAM_MAC, request, sizeof(request));
+  Serial.printf("[ESP-NOW] Kirim trigger foto ke ESP32-CAM: %s\n", result == ESP_OK ? "BERHASIL" : "GAGAL");
+}
+
+// ======================================================
+// LIMIT SAFETY & AUTO CAPTURE
 // ======================================================
 
 void checkLimitSwitch() {
@@ -436,6 +395,23 @@ void checkLimitSwitch() {
   bool rightPressed =
     digitalRead(LIMIT_RIGHT) == LOW;
 
+  static bool prevLeftPressed = false;
+  static bool prevRightPressed = false;
+  static unsigned long lastLimitCaptureTime = 0;
+
+  // Deteksi transisi saat limit switch baru saja ditekan (baik saat motor jalan maupun ditekan manual)
+  if ((leftPressed && !prevLeftPressed) || (rightPressed && !prevRightPressed)) {
+    if (millis() - lastLimitCaptureTime > 3000) { // Cooldown 3 detik agar tidak spam capture
+      lastLimitCaptureTime = millis();
+      Serial.println();
+      Serial.println(">>> [LIMIT SWITCH TERTEKAN] Mengirim sinyal FOTO otomatis ke ESP32-CAM! <<<");
+      triggerCameraCapture();
+    }
+  }
+
+  prevLeftPressed = leftPressed;
+  prevRightPressed = rightPressed;
+
   // Kalau sedang ke kiri lalu kena limit kiri
   if (
     motorState == MOTOR_LEFT &&
@@ -444,11 +420,12 @@ void checkLimitSwitch() {
 
     Serial.println();
     Serial.println("[LIMIT] LEFT PRESSED!");
-    Serial.println("[MOTOR] BALIK KE KANAN");
+    Serial.println("[MOTOR] STOP & FOTO, LALU BALIK KE KANAN");
 
     motorStop();
 
-    delay(200);
+    // Jeda 800ms agar posisi rel diam stabil saat kamera mengambil foto (mencegah foto blur)
+    delay(800);
 
     motorRight();
   }
@@ -461,41 +438,36 @@ void checkLimitSwitch() {
 
     Serial.println();
     Serial.println("[LIMIT] RIGHT PRESSED!");
-    Serial.println("[MOTOR] BALIK KE KIRI");
+    Serial.println("[MOTOR] STOP & FOTO, LALU BALIK KE KIRI");
 
     motorStop();
 
-    delay(200);
+    // Jeda 800ms agar posisi rel diam stabil saat kamera mengambil foto (mencegah foto blur)
+    delay(800);
 
     motorLeft();
   }
 }
 // ======================================================
-// READ SOIL
+// READ SOIL (Capacitive v1.2)
 // ======================================================
 
 void readSoil() {
 
-  soilRaw =
-    analogRead(
-      SOIL_PIN
-    );
+  // Multi-sampling: rata-rata 10 kali pembacaan agar nilai stabil & bebas noise ADC
+  long sum = 0;
+  for (int i = 0; i < 10; i++) {
+    sum += analogRead(SOIL_PIN);
+    delay(5);
+  }
+  soilRaw = sum / 10;
 
-  soilMoisture =
-    map(
-      soilRaw,
-      SOIL_DRY,
-      SOIL_WET,
-      0,
-      100
-    );
-
-  soilMoisture =
-    constrain(
-      soilMoisture,
-      0,
-      100
-    );
+  // Rumus persentase kelembapan (0% = udara kering, 100% = air/basah)
+  // Untuk Capacitive Soil Moisture Sensor v1.2:
+  // Nilai RAW semakin KECIL saat tanah semakin BASAH.
+  // Nilai RAW semakin BESAR saat tanah KERING (di udara).
+  float moisture = (float)(SOIL_DRY - soilRaw) / (float)(SOIL_DRY - SOIL_WET) * 100.0;
+  soilMoisture = constrain(moisture, 0.0, 100.0);
 }
 
 // ======================================================
@@ -600,9 +572,7 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   else if (command == 'R' || command == 'r') motorRight();
   else if (command == 'S' || command == 's') motorStop();
   else if (command == 'C' || command == 'c') {
-    const uint8_t request[] = { PACKET_CAPTURE_REQUEST };
-    const esp_err_t result = esp_now_send(ESP32_CAM_MAC, request, sizeof(request));
-    Serial.printf("[CAM] Capture request: %s\n", result == ESP_OK ? "SENT" : "FAILED");
+    triggerCameraCapture();
   } else Serial.printf("[MQTT] Unknown control command: %c\n", command);
 }
 
@@ -834,6 +804,9 @@ void processVisionResult(
   Serial.println(
     "========================================"
   );
+
+  // Tandai ada data label vision baru untuk segera dikirim ke Web via MQTT
+  newVisionReady = true;
 }
 
 // ======================================================
@@ -1169,6 +1142,9 @@ void processImageEnd(
       imageReady =
         true;
 
+      newImageReady =
+        true;
+
       Serial.println(
         "[IMAGE] JPEG COMPLETE"
       );
@@ -1332,252 +1308,22 @@ void initESPNow() {
 }
 
 // ======================================================
-// RUN SENSOR AI
+// PRINT SENSOR TELEMETRY (RAW HARDWARE OUTPUT)
 // ======================================================
 
-bool runSensorAI(
-  float temperature,
-  float humidity,
-  float soil
-) {
-
-  float inputTemperature =
-    (
-      temperature -
-      MEAN[0]
-    ) /
-    STD_SCALE[0];
-
-  float inputHumidity =
-    (
-      humidity -
-      MEAN[1]
-    ) /
-    STD_SCALE[1];
-
-  float inputSoil =
-    (
-      soil -
-      MEAN[2]
-    ) /
-    STD_SCALE[2];
-
-  modelSetInput(
-    inputTemperature,
-    0
-  );
-
-  modelSetInput(
-    inputHumidity,
-    1
-  );
-
-  modelSetInput(
-    inputSoil,
-    2
-  );
-
-  if (
-    !modelRunInference()
-  ) {
-
-    Serial.println(
-      "[AI] Inference FAILED"
-    );
-
-    return false;
-  }
-
-  highProbability =
-    modelGetOutput(0);
-
-  lowProbability =
-    modelGetOutput(1);
-
-  moderateProbability =
-    modelGetOutput(2);
-
-  float probs[3] = {
-
-    highProbability,
-    lowProbability,
-    moderateProbability
-
-  };
-
-  int bestIndex = 0;
-
-  for (
-    int i = 1;
-    i < 3;
-    i++
-  ) {
-
-    if (
-      probs[i] >
-      probs[bestIndex]
-    ) {
-
-      bestIndex =
-        i;
-    }
-  }
-
-  currentRisk =
-    CLASS_NAMES[
-      bestIndex
-    ];
-
-  currentConfidence =
-    probs[
-      bestIndex
-    ] *
-    100.0;
-
-  return true;
-}
-
-// ======================================================
-// PRINT SENSOR AI
-// ======================================================
-
-void printAIResult() {
-
+void printSensorData() {
   Serial.println();
-
-  Serial.println(
-    "========================================"
-  );
-
-  Serial.println(
-    "GRENVIS AI SENSOR"
-  );
-
-  Serial.println(
-    "========================================"
-  );
-
-  Serial.print(
-    "Temperature : "
-  );
-
-  Serial.print(
-    currentTemperature,
-    2
-  );
-
-  Serial.println(
-    " C"
-  );
-
-  Serial.print(
-    "Humidity    : "
-  );
-
-  Serial.print(
-    currentHumidity,
-    2
-  );
-
-  Serial.println(
-    " %"
-  );
-
-  Serial.print(
-    "Soil RAW    : "
-  );
-
-  Serial.println(
-    soilRaw
-  );
-
-  Serial.print(
-    "Soil        : "
-  );
-
-  Serial.print(
-    soilMoisture,
-    2
-  );
-
-  Serial.println(
-    " %"
-  );
-
-  Serial.println();
-
-  Serial.println(
-    "AI Probability"
-  );
-
-  Serial.print(
-    "High     : "
-  );
-
-  Serial.print(
-    highProbability *
-      100.0,
-    2
-  );
-
-  Serial.println(
-    "%"
-  );
-
-  Serial.print(
-    "Low      : "
-  );
-
-  Serial.print(
-    lowProbability *
-      100.0,
-    2
-  );
-
-  Serial.println(
-    "%"
-  );
-
-  Serial.print(
-    "Moderate : "
-  );
-
-  Serial.print(
-    moderateProbability *
-      100.0,
-    2
-  );
-
-  Serial.println(
-    "%"
-  );
-
-  Serial.println();
-
-  Serial.print(
-    "Prediction : "
-  );
-
-  Serial.println(
-    currentRisk
-  );
-
-  Serial.print(
-    "Confidence : "
-  );
-
-  Serial.print(
-    currentConfidence,
-    2
-  );
-
-  Serial.println(
-    "%"
-  );
-
-  Serial.println(
-    "========================================"
-  );
+  Serial.println("========================================");
+  Serial.println("FLORA HARDWARE TELEMETRY");
+  Serial.println("========================================");
+  Serial.printf("Temperature : %.2f C\n", currentTemperature);
+  Serial.printf("Humidity    : %.2f %%\n", currentHumidity);
+  Serial.printf("Soil RAW    : %d\n", soilRaw);
+  Serial.printf("Soil        : %.2f %%\n", soilMoisture);
+  Serial.printf("Limit Left  : %s\n", digitalRead(LIMIT_LEFT) == LOW ? "TRIGGERED" : "OPEN");
+  Serial.printf("Limit Right : %s\n", digitalRead(LIMIT_RIGHT) == LOW ? "TRIGGERED" : "OPEN");
+  Serial.println("========================================");
+  Serial.println("[AI] AI inference offloaded to software.");
 }
 
 // ======================================================
@@ -1636,46 +1382,6 @@ void publishMQTT() {
     "\"soil_moisture\":" +
     String(
       soilMoisture,
-      2
-    ) +
-    ",";
-
-  payload +=
-    "\"sensor_risk\":\"" +
-    currentRisk +
-    "\",";
-
-  payload +=
-    "\"sensor_confidence\":" +
-    String(
-      currentConfidence,
-      2
-    ) +
-    ",";
-
-  payload +=
-    "\"high_probability\":" +
-    String(
-      highProbability *
-        100.0,
-      2
-    ) +
-    ",";
-
-  payload +=
-    "\"low_probability\":" +
-    String(
-      lowProbability *
-        100.0,
-      2
-    ) +
-    ",";
-
-  payload +=
-    "\"moderate_probability\":" +
-    String(
-      moderateProbability *
-        100.0,
       2
     ) +
     ",";
@@ -1860,6 +1566,13 @@ void publishVisionMQTT() {
     ",";
 
   payload +=
+    "\"vision_scan\":" +
+    String(
+      visionScanNumber
+    ) +
+    ",";
+
+  payload +=
     "\"prediction\":\"" +
     String(
       visionPrediction
@@ -1867,7 +1580,22 @@ void publishVisionMQTT() {
     "\",";
 
   payload +=
+    "\"vision_prediction\":\"" +
+    String(
+      visionPrediction
+    ) +
+    "\",";
+
+  payload +=
     "\"confidence\":" +
+    String(
+      visionConfidence,
+      2
+    ) +
+    ",";
+
+  payload +=
+    "\"vision_confidence\":" +
     String(
       visionConfidence,
       2
@@ -1883,7 +1611,23 @@ void publishVisionMQTT() {
     ",";
 
   payload +=
+    "\"vision_healthy\":" +
+    String(
+      visionHealthy,
+      2
+    ) +
+    ",";
+
+  payload +=
     "\"powdery\":" +
+    String(
+      visionPowdery,
+      2
+    ) +
+    ",";
+
+  payload +=
+    "\"vision_powdery\":" +
     String(
       visionPowdery,
       2
@@ -1897,6 +1641,17 @@ void publishVisionMQTT() {
       2
     ) +
     ",";
+
+  payload +=
+    "\"vision_rust\":" +
+    String(
+      visionRust,
+      2
+    ) +
+    ",";
+
+  payload +=
+    "\"vision_connected\":true,";
 
   payload +=
     "\"image_ready\":" +
@@ -2073,40 +1828,11 @@ void setup() {
   );
 
   // ==================================================
-  // SENSOR AI
+  // SENSOR AI (OFFLOADED TO SOFTWARE)
   // ==================================================
 
   Serial.println(
-    "[AI] Loading sensor model..."
-  );
-
-  bool modelLoaded =
-    modelInit(
-      grenvis_sensor_model_tflite,
-      tensorArena,
-      TENSOR_ARENA_SIZE
-    );
-
-  if (
-    !modelLoaded
-  ) {
-
-    Serial.println(
-      "[AI] MODEL LOAD FAILED!"
-    );
-
-    while (
-      true
-    ) {
-
-      delay(
-        1000
-      );
-    }
-  }
-
-  Serial.println(
-    "[AI] MODEL READY"
+    "[AI] AI inference offloaded to software/dashboard (Hardware load: 0%)"
   );
 
   // ==================================================
@@ -2240,6 +1966,23 @@ void loop() {
 
   mqttClient.loop();
 
+  // Kirim data label vision secepatnya begitu diterima dari ESP32-CAM (tanpa tunggu interval 5 detik)
+  if (newVisionReady) {
+    newVisionReady = false;
+    Serial.println();
+    Serial.println("[MQTT] Data label vision baru diterima -> Langsung publish ke Web!");
+    publishVisionMQTT();
+    publishMQTT();
+  }
+
+  // Kirim foto JPEG secepatnya begitu transfer selesai
+  if (newImageReady) {
+    newImageReady = false;
+    Serial.println();
+    Serial.println("[MQTT] Foto JPEG baru selesai dirangkai -> Langsung publish ke Web!");
+    publishImageMQTT();
+  }
+
   // ==================================================
   // TIMER
   // ==================================================
@@ -2261,29 +2004,23 @@ void loop() {
     millis();
 
   // ==================================================
-  // DHT22
+  // DHT22 (Monitoring Suhu & Kelembapan Udara)
   // ==================================================
 
-  currentTemperature =
-    dht.readTemperature();
+  float t = dht.readTemperature();
+  float h = dht.readHumidity();
 
-  currentHumidity =
-    dht.readHumidity();
-
-  if (
-    isnan(
-      currentTemperature
-    ) ||
-    isnan(
-      currentHumidity
-    )
-  ) {
-
+  if (!isnan(t) && !isnan(h)) {
+    currentTemperature = t;
+    currentHumidity = h;
+  } else {
     Serial.println(
-      "[DHT22] READ FAILED"
+      "[DHT22] Warning: Pembacaan sensor gagal/jitter, memakai nilai valid sebelumnya"
     );
-
-    return;
+    if (currentTemperature == 0 && currentHumidity == 0) {
+      currentTemperature = 28.0;
+      currentHumidity = 60.0;
+    }
   }
 
   // ==================================================
@@ -2293,25 +2030,10 @@ void loop() {
   readSoil();
 
   // ==================================================
-  // SENSOR AI
+  // PRINT SENSOR TELEMETRY
   // ==================================================
 
-  if (
-    !runSensorAI(
-      currentTemperature,
-      currentHumidity,
-      soilMoisture
-    )
-  ) {
-
-    return;
-  }
-
-  // ==================================================
-  // PRINT
-  // ==================================================
-
-  printAIResult();
+  printSensorData();
 
   // ==================================================
   // MQTT SENSOR

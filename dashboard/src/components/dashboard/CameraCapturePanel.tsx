@@ -13,8 +13,8 @@ export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }
   const captureTime = latest?.image_timestamp
     ? formatTime(latest.image_timestamp)
     : latest?.timestamp
-    ? formatTime(latest.timestamp)
-    : 'Awaiting first capture';
+      ? formatTime(latest.timestamp)
+      : 'Awaiting first capture';
 
   const prediction = latest?.vision_prediction || 'Awaiting inference';
   const dominantProb = Math.max(
@@ -35,11 +35,10 @@ export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }
           </h2>
         </div>
         <span
-          className={`text-xs font-semibold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${
-            captureUrl
+          className={`text-xs font-semibold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${captureUrl
               ? 'bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]'
               : 'bg-[#F4F7F2] text-[#617253] border-[#E4EBE0]'
-          }`}
+            }`}
         >
           <span className={`w-1.5 h-1.5 rounded-full ${captureUrl ? 'bg-[#597C00]' : 'bg-[#617253]'}`} />
           {captureUrl ? 'Optical Frame Uploaded' : 'Telemetry Mode (No Frame)'}
