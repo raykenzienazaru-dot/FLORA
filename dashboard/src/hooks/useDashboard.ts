@@ -10,7 +10,7 @@ import { getDashboardState, createWateringEvent } from '../services/api';
 import { evaluateSystemAlert } from '../utils/sensorRules';
 import { useWebSocket } from './useWebSocket';
 import { deviceMqtt } from '../services/deviceMqtt';
-import { appendLocalTelemetry, mergeLatestLocalTelemetry, summarizeLocalHistory } from '../services/localHistory';
+import { appendLocalTelemetry, mergeLatestLocalTelemetry, readLocalHistory, summarizeLocalHistory } from '../services/localHistory';
 
 interface UseDashboardReturn {
   data: DashboardState | null;
@@ -41,21 +41,45 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
   const loadData = useCallback(async () => {
     try {
       const state = await getDashboardState();
-      setData(state);
+      setData((prev) => {
+        if (!prev) return state;
+        return {
+          ...state,
+          latest: state.latest ? { ...state.latest, image_url: prev.latest?.image_url || state.latest.image_url } : null,
+        };
+      });
       setError(null);
       if (state.latest) {
         const currentAlert = evaluateSystemAlert(state.latest, state.mqtt);
         prevSeverityRef.current = currentAlert.severity;
       }
-    } catch (err: any) {
-      setError(err?.message || 'Backend tidak dapat dihubungi');
-      if (onToast) {
-        onToast('Backend tidak dapat dihubungi');
-      }
+    } catch {
+      // Pada Vercel (static deployment tanpa Express server), fallback ke data lokal
+      setData((prev) => {
+        if (prev) return prev;
+        const history = readLocalHistory();
+        return {
+          latest: history.at(-1) || null,
+          history,
+          summary: summarizeLocalHistory(history, 0),
+          mqtt: 'CONNECTING',
+          lastTelemetryAt: history.at(-1)?.timestamp || null,
+          config: {
+            soilDry: 30,
+            soilVeryDry: 20,
+            soilWet: 80,
+            tempHigh: 35,
+            humidityLow: 45,
+            humidityHigh: 80,
+            consecutive: 3,
+          },
+          wateringEvents: [],
+        };
+      });
     } finally {
       setLoading(false);
     }
-  }, [onToast]);
+  }, []);
 
   const handleMqttMessage = useCallback(
     (msg: WebSocketMessage) => {
@@ -63,10 +87,8 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
 
       if (msg.type === 'telemetry' && msg.data && msg.data.timestamp) {
         setData((prev) => {
-          if (!prev) return prev;
-
-          // Check for condition / severity change
-          const newAlert = evaluateSystemAlert(msg.data, prev.mqtt);
+          const currentMqtt = prev?.mqtt || 'CONNECTED';
+          const newAlert = evaluateSystemAlert(msg.data, currentMqtt);
           if (
             prevSeverityRef.current &&
             prevSeverityRef.current !== newAlert.severity &&
@@ -79,16 +101,49 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
           prevSeverityRef.current = newAlert.severity;
 
           const history = appendLocalTelemetry(msg.data);
+          const wateringEvents = prev?.wateringEvents || [];
           return {
-            ...prev,
             latest: msg.data,
             history,
-            summary: summarizeLocalHistory(history, prev.wateringEvents.length),
+            summary: summarizeLocalHistory(history, wateringEvents.length),
+            mqtt: currentMqtt,
             lastTelemetryAt: msg.data.timestamp,
+            config: prev?.config || {
+              soilDry: 30,
+              soilVeryDry: 20,
+              soilWet: 80,
+              tempHigh: 35,
+              humidityLow: 45,
+              humidityHigh: 80,
+              consecutive: 3,
+            },
+            wateringEvents,
           };
         });
       } else if (msg.type === 'mqtt' && msg.data) {
-        setData((prev) => (prev ? { ...prev, mqtt: msg.data } : prev));
+        setData((prev) => {
+          if (!prev) {
+            const history = readLocalHistory();
+            return {
+              latest: history.at(-1) || null,
+              history,
+              summary: summarizeLocalHistory(history, 0),
+              mqtt: msg.data,
+              lastTelemetryAt: history.at(-1)?.timestamp || null,
+              config: {
+                soilDry: 30,
+                soilVeryDry: 20,
+                soilWet: 80,
+                tempHigh: 35,
+                humidityLow: 45,
+                humidityHigh: 80,
+                consecutive: 3,
+              },
+              wateringEvents: [],
+            };
+          }
+          return { ...prev, mqtt: msg.data };
+        });
       } else if (msg.type === 'vision') {
         setData((prev) => {
           if (!prev?.latest) return prev;
