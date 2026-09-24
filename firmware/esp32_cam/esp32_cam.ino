@@ -126,6 +126,15 @@ bool initCamera() {
   Serial.println("CAMERA INIT (FLORA SENSOR)");
   Serial.println("==============================");
 
+  // 1. Hardware Power-Cycle sensor OV2640 via PWDN (GPIO 32)
+  if (PWDN_GPIO_NUM != -1) {
+    pinMode(PWDN_GPIO_NUM, OUTPUT);
+    digitalWrite(PWDN_GPIO_NUM, HIGH); // Power OFF sensor
+    delay(100);
+    digitalWrite(PWDN_GPIO_NUM, LOW);  // Power ON sensor
+    delay(100);
+  }
+
   camera_config_t config = {};
   config.ledc_channel = LEDC_CHANNEL_0;
   config.ledc_timer   = LEDC_TIMER_0;
@@ -166,9 +175,49 @@ bool initCamera() {
     config.fb_location  = CAMERA_FB_IN_DRAM;
   }
 
-  esp_err_t err = esp_camera_init(&config);
+  // Coba inisialisasi (up to 3x percobaan dengan fallback 10MHz jika 20MHz gagal)
+  esp_err_t err = ESP_FAIL;
+  for (int attempt = 1; attempt <= 3; attempt++) {
+    Serial.printf("[CAM] Mencoba probe sensor kamera (percobaan %d/3, XCLK: %d MHz)...\n", 
+                  attempt, config.xclk_freq_hz / 1000000);
+    err = esp_camera_init(&config);
+    if (err == ESP_OK) break;
+
+    Serial.printf("[CAM] Probe gagal (0x%x), deinit dan reset sensor...\n", err);
+    esp_camera_deinit();
+    delay(150);
+
+    // Reset daya modul sensor
+    if (PWDN_GPIO_NUM != -1) {
+      digitalWrite(PWDN_GPIO_NUM, HIGH);
+      delay(100);
+      digitalWrite(PWDN_GPIO_NUM, LOW);
+      delay(100);
+    }
+
+    // Pada percobaan berikutnya, turunkan frekuensi XCLK ke 10MHz (sangat efektif untuk SCCB probe)
+    if (attempt >= 1) {
+      config.xclk_freq_hz = 10000000;
+    }
+  }
+
   if (err != ESP_OK) {
     Serial.printf("[CAM] Init FAILED: 0x%x\n", err);
+    Serial.println();
+    Serial.println("==========================================================");
+    Serial.println("[PENTING] CARA MEMPERBAIKI 'SCCB_Read Failed / Error 0x106':");
+    Serial.println("==========================================================");
+    Serial.println("1. KABEL PITA KAMERA (FPC):");
+    Serial.println("   - Buka pengunci hitam soket kamera, lepaskan pita sensor.");
+    Serial.println("   - Pasang kembali tegak lurus dan kunci rapat klip hitamnya.");
+    Serial.println("2. PIN GPIO 0 (BOOT PIN):");
+    Serial.println("   - Jumper GPIO 0 ke GND HANYA saat flashing/upload.");
+    Serial.println("   - Cabut jumper GPIO 0 dari GND saat kamera menyala normal!");
+    Serial.println("   - GPIO 0 dipakai sebagai XCLK (clock sensor). Jika terhubung GND, kamera tidak ada clock.");
+    Serial.println("3. TEGANGAN & ARUS (POWER):");
+    Serial.println("   - Hubungkan daya ke pin 5V (BUKAN 3.3V). Regulator internal butuh 5V.");
+    Serial.println("   - Pastikan arus minimal 1A - 2A.");
+    Serial.println("==========================================================");
     return false;
   }
 
