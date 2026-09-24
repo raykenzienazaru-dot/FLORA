@@ -50,7 +50,23 @@ export async function sendDemoData(payload: Partial<TelemetryRecord>): Promise<T
 }
 
 export async function sendDeviceCommand(command: DeviceCommand): Promise<DeviceControlResponse> {
-  await deviceMqtt.publish(command);
-  const message = command === 'C' ? 'Camera capture request sent' : `Command ${command} sent to L298N`;
-  return { success: true, command, message, mqtt: 'CONNECTED' };
+  try {
+    await deviceMqtt.publish(command);
+    const message = command === 'C' ? 'Camera capture request sent' : `Command ${command} sent to L298N`;
+    return { success: true, command, message, mqtt: 'CONNECTED' };
+  } catch (directMqttErr) {
+    try {
+      const res = await fetch('/api/control', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command }),
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch {
+      // ignore fallback error and rethrow original
+    }
+    throw directMqttErr;
+  }
 }

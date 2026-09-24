@@ -6,7 +6,7 @@
 export const FLORA_DEVICE = {
   mainMac: '8C:AA:B5:37:71:18',
   cameraMac: 'F8:B3:B7:A6:F3:9C',
-  wifiChannel: 1,
+  wifiChannel: 6,
   mqtt: {
     url: 'wss://m2da914a.ala.eu-central-1.emqxsl.com:8084/mqtt',
     username: 'grenvis_esp32',

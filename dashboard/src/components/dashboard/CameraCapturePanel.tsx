@@ -1,12 +1,32 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { TelemetryRecord } from '../../types/dashboard';
 import { fmt, formatTime } from '../../utils/formatters';
+import { sendDeviceCommand } from '../../services/api';
 
 interface CameraCapturePanelProps {
   latest: TelemetryRecord | null;
 }
 
 export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }) => {
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [captureFeedback, setCaptureFeedback] = useState<string | null>(null);
+
+  const handleCapture = async () => {
+    try {
+      setIsCapturing(true);
+      setCaptureFeedback('Mengirim sinyal capture...');
+      const res = await sendDeviceCommand('C');
+      setCaptureFeedback(res.message || 'Sinyal capture terkirim ke ESP32');
+    } catch (err: any) {
+      setCaptureFeedback(err?.message || 'Gagal mengirim sinyal capture');
+    } finally {
+      setTimeout(() => {
+        setIsCapturing(false);
+        setCaptureFeedback(null);
+      }, 3500);
+    }
+  };
+
   const captureUrl = latest?.image_url || latest?.image_path || null;
   const isVisionConnected = Boolean(latest?.vision_connected);
 
@@ -59,7 +79,7 @@ export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }
 
   return (
     <section id="cameraCapture" className="flora-card p-6 mt-8 shadow-xs">
-      <div className="flex justify-between items-start mb-4">
+      <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
         <div>
           <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
             Camera Subsystem
@@ -68,15 +88,26 @@ export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }
             Leaf Canopy Camera Stream
           </h2>
         </div>
-        <span
-          className={`text-xs font-semibold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${captureUrl
-              ? 'bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]'
-              : 'bg-[#F4F7F2] text-[#617253] border-[#E4EBE0]'
-            }`}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full ${captureUrl ? 'bg-[#597C00]' : 'bg-[#617253]'}`} />
-          {captureUrl ? 'Optical Frame Uploaded' : 'Telemetry Mode (No Frame)'}
-        </span>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleCapture}
+            disabled={isCapturing}
+            className="text-xs font-semibold px-3 py-1.5 rounded-full bg-[#1E2805] hover:bg-[#2C3B0E] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
+            title="Kirim sinyal perintah foto ke ESP32-CAM via MQTT & ESP-NOW"
+          >
+            <span>{isCapturing ? '⏳' : '📸'}</span>
+            <span>{captureFeedback || (isCapturing ? 'Memproses...' : 'Ambil Foto Sekarang')}</span>
+          </button>
+          <span
+            className={`text-xs font-semibold px-2.5 py-1.5 rounded-full border flex items-center gap-1.5 ${captureUrl
+                ? 'bg-[#EAF4E8] text-[#22531A] border-[#C4E1BF]'
+                : 'bg-[#F4F7F2] text-[#617253] border-[#E4EBE0]'
+              }`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${captureUrl ? 'bg-[#597C00]' : 'bg-[#617253]'}`} />
+            {captureUrl ? 'Optical Frame Uploaded' : 'Telemetry Mode (No Frame)'}
+          </span>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-stretch">

@@ -241,15 +241,16 @@ app.post('/api/watering', (req, res) => {
 });
 app.post('/api/control', (req, res) => {
   const { command } = req.body || {};
-  if (!command || !['L', 'R', 'S'].includes(command)) {
-    return res.status(400).json({ success: false, error: 'Invalid command. Allowed commands: L, R, S' });
+  if (!command || !['L', 'R', 'S', 'C'].includes(command)) {
+    return res.status(400).json({ success: false, error: 'Invalid command. Allowed commands: L, R, S, C' });
   }
 
   const controlTopic = process.env.MQTT_CONTROL_TOPIC || 'grenvis/device/control';
   const messages = {
     'L': 'Left command sent',
     'R': 'Right command sent',
-    'S': 'Stop command sent'
+    'S': 'Stop command sent',
+    'C': 'Camera capture request sent'
   };
   const message = messages[command];
 

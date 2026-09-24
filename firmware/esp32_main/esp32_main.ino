@@ -48,6 +48,8 @@ const char* MQTT_TOPIC_CONTROL =
   "grenvis/device/control";
 
 const uint8_t ESP32_CAM_MAC[] = { 0xF8, 0xB3, 0xB7, 0xA6, 0xF3, 0x9C };
+uint8_t targetCamMac[6] = { 0xF8, 0xB3, 0xB7, 0xA6, 0xF3, 0x9C };
+bool hasLearnedCamMac = false;
 
 // ======================================================
 // MQTT CLIENT
@@ -379,8 +381,22 @@ void motorLeft() {
 
 void triggerCameraCapture() {
   const uint8_t request[] = { PACKET_CAPTURE_REQUEST };
-  const esp_err_t result = esp_now_send(ESP32_CAM_MAC, request, sizeof(request));
-  Serial.printf("[ESP-NOW] Kirim trigger foto ke ESP32-CAM: %s\n", result == ESP_OK ? "BERHASIL" : "GAGAL");
+  const uint8_t* target = hasLearnedCamMac ? targetCamMac : ESP32_CAM_MAC;
+
+  if (!esp_now_is_peer_exist(target)) {
+    esp_now_peer_info_t peer = {};
+    memcpy(peer.peer_addr, target, 6);
+    peer.channel = WiFi.channel();
+    peer.encrypt = false;
+    peer.ifidx = WIFI_IF_STA;
+    esp_now_add_peer(&peer);
+  }
+
+  const esp_err_t result = esp_now_send(target, request, sizeof(request));
+  Serial.println();
+  Serial.printf("[ESP-NOW] Kirim trigger foto ke ESP32-CAM (%02X:%02X:%02X:%02X:%02X:%02X): %s (kode: %d)\n",
+    target[0], target[1], target[2], target[3], target[4], target[5],
+    result == ESP_OK ? "BERHASIL" : "GAGAL", result);
 }
 
 // ======================================================
@@ -1191,6 +1207,19 @@ void onEspNowReceive(
   ) {
 
     return;
+  }
+
+  if (info != nullptr && info->src_addr != nullptr) {
+    memcpy(targetCamMac, info->src_addr, 6);
+    hasLearnedCamMac = true;
+    if (!esp_now_is_peer_exist(targetCamMac)) {
+      esp_now_peer_info_t peer = {};
+      memcpy(peer.peer_addr, targetCamMac, 6);
+      peer.channel = WiFi.channel();
+      peer.encrypt = false;
+      peer.ifidx = WIFI_IF_STA;
+      esp_now_add_peer(&peer);
+    }
   }
 
   printMacAddress(

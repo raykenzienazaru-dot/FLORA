@@ -63,8 +63,8 @@ volatile bool captureRequested = false;
 #define PACKET_IMAGE_END       4
 #define PACKET_CAPTURE_REQUEST 5
 
-// Channel ESP-NOW harus sama persis dengan ESP32 Utama (Channel 1)
-constexpr uint8_t ESP_NOW_CHANNEL = 1;
+// Channel ESP-NOW harus sama persis dengan ESP32 Utama (Channel 6)
+constexpr uint8_t ESP_NOW_CHANNEL = 6;
 
 // =====================================================
 // RESULT PACKET (LIGHTWEIGHT METADATA)
@@ -203,10 +203,26 @@ void onEspNowReceive(
   const uint8_t* incomingData,
   int len
 ) {
-  if (info == nullptr || incomingData == nullptr || len != 1) return;
+  if (incomingData == nullptr || len < 1) return;
+
+  // Sinkronkan MAC pengirim (ESP32-Main) otomatis agar foto kembali ke board yang benar
+  if (info != nullptr && info->src_addr != nullptr) {
+    memcpy(receiverMAC, info->src_addr, 6);
+    if (!esp_now_is_peer_exist(receiverMAC)) {
+      esp_now_peer_info_t peer = {};
+      memcpy(peer.peer_addr, receiverMAC, 6);
+      peer.channel = WiFi.channel();
+      peer.encrypt = false;
+      esp_now_add_peer(&peer);
+    }
+  }
+
+  Serial.printf("[ESP-NOW] Paket diterima: %d byte (Tipe: %d)\n", len, incomingData[0]);
+
   if (incomingData[0] == PACKET_CAPTURE_REQUEST) {
     captureRequested = true;
-    Serial.println("[ESP-NOW] CAPTURE REQUEST RECEIVED");
+    Serial.println();
+    Serial.println(">>> [ESP-NOW] TRIGGER FOTO DITERIMA DARI WEB / ESP32-MAIN! <<<");
   }
 }
 
