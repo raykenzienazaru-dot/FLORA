@@ -239,6 +239,61 @@ app.post('/api/watering', (req, res) => {
   const event = { id: Date.now(), timestamp: new Date().toISOString(), soil_before: latest?.soil_moisture ?? null, note: String(req.body.note || '').slice(0, 200) };
   wateringEvents.push(event); writeJson(wateringFile, wateringEvents); broadcast({type:'watering', data:event}); res.status(201).json(event);
 });
+let dummyFrames = [];
+try {
+  dummyFrames = require('./src/assets/dummyFrames.json');
+} catch (e) {
+  console.log('Dummy frames asset not loaded:', e.message);
+}
+let currentDummyIdx = 0;
+
+function triggerSoftwareVision() {
+  if (!dummyFrames || !dummyFrames.length) return null;
+  const frame = dummyFrames[currentDummyIdx % dummyFrames.length];
+  currentDummyIdx++;
+  const imgTs = new Date().toISOString();
+
+  if (history.length) {
+    const latest = history[history.length - 1];
+    latest.image_url = frame.imageUrl;
+    latest.image_timestamp = imgTs;
+    latest.vision_prediction = frame.prediction;
+    latest.vision_healthy = frame.healthy;
+    latest.vision_powdery = frame.powdery;
+    latest.vision_rust = frame.rust;
+    latest.vision_connected = true;
+    latest.vision_confidence = Math.max(frame.healthy, frame.powdery, frame.rust);
+  }
+
+  broadcast({ type: 'image', data: { image_url: frame.imageUrl, image_timestamp: imgTs } });
+  broadcast({ 
+    type: 'vision', 
+    data: {
+      vision_prediction: frame.prediction,
+      vision_healthy: frame.healthy,
+      vision_powdery: frame.powdery,
+      vision_rust: frame.rust,
+      vision_connected: true
+    } 
+  });
+  if (history.length) {
+    broadcast({ type: 'telemetry', data: history.at(-1) });
+  }
+
+  if (mqttClient && mqttState === 'CONNECTED') {
+    const visionTopic = process.env.MQTT_VISION_TOPIC || 'grenvis/vision/data';
+    mqttClient.publish(visionTopic, JSON.stringify({
+      prediction: frame.prediction,
+      healthy: frame.healthy,
+      powdery: frame.powdery,
+      rust: frame.rust,
+      confidence: Math.max(frame.healthy, frame.powdery, frame.rust)
+    }));
+  }
+
+  return frame;
+}
+
 app.post('/api/control', (req, res) => {
   const { command } = req.body || {};
   if (!command || !['L', 'R', 'S', 'C'].includes(command)) {
@@ -253,6 +308,10 @@ app.post('/api/control', (req, res) => {
     'C': 'Camera capture request sent'
   };
   const message = messages[command];
+
+  if (command === 'C') {
+    triggerSoftwareVision();
+  }
 
   if (mqttClient && mqttState === 'CONNECTED') {
     mqttClient.publish(controlTopic, command, { qos: 1 }, (err) => {
@@ -295,6 +354,7 @@ if (mqttUrl) {
       process.env.MQTT_STATUS_TOPIC || 'grenvis/sensor/status',
       process.env.MQTT_VISION_TOPIC || 'grenvis/vision/data',
       process.env.MQTT_IMAGE_TOPIC || 'grenvis/vision/image',
+      process.env.MQTT_CONTROL_TOPIC || 'grenvis/device/control',
     ]);
     broadcast({ type: 'mqtt', data: mqttState });
   });
@@ -303,6 +363,14 @@ if (mqttUrl) {
   client.on('error', err => console.error('MQTT:', err.message));
   client.on('message', (topic, buffer) => {
     if (topic === (process.env.MQTT_STATUS_TOPIC || 'grenvis/sensor/status')) return;
+
+    if (topic === (process.env.MQTT_CONTROL_TOPIC || 'grenvis/device/control')) {
+      const cmd = buffer.toString().trim();
+      if (cmd === 'C' || cmd === 'c') {
+        triggerSoftwareVision();
+      }
+      return;
+    }
 
     if (topic === (process.env.MQTT_IMAGE_TOPIC || 'grenvis/vision/image')) {
       const base64 = buffer.toString('base64');

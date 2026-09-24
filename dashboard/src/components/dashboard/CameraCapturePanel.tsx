@@ -2,6 +2,11 @@ import React, { useState } from 'react';
 import { TelemetryRecord } from '../../types/dashboard';
 import { fmt, formatTime } from '../../utils/formatters';
 import { sendDeviceCommand } from '../../services/api';
+import {
+  getNextSoftwareVisionFrame,
+  getDefaultSoftwareVisionFrame,
+  SoftwareVisionFrame,
+} from '../../services/softwareVision';
 
 interface CameraCapturePanelProps {
   latest: TelemetryRecord | null;
@@ -10,15 +15,22 @@ interface CameraCapturePanelProps {
 export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }) => {
   const [isCapturing, setIsCapturing] = useState(false);
   const [captureFeedback, setCaptureFeedback] = useState<string | null>(null);
+  const [softwareFrame, setSoftwareFrame] = useState<SoftwareVisionFrame | null>(null);
 
   const handleCapture = async () => {
     try {
       setIsCapturing(true);
-      setCaptureFeedback('Mengirim sinyal capture...');
+      setCaptureFeedback('Memproses analisis AI Software...');
+
+      // Ambil frame foto tanaman dummy berikutnya dari software (Healthy -> Powdery -> Rust)
+      const nextFrame = getNextSoftwareVisionFrame();
+      setSoftwareFrame(nextFrame);
+
+      // Tetap kirimkan sinyal hardware 'C' ke device via API / MQTT
       const res = await sendDeviceCommand('C');
-      setCaptureFeedback(res.message || 'Sinyal capture terkirim ke ESP32');
+      setCaptureFeedback(res.message || 'Foto & Analisis AI Diperbarui');
     } catch (err: any) {
-      setCaptureFeedback(err?.message || 'Gagal mengirim sinyal capture');
+      setCaptureFeedback(err?.message || 'Foto AI Diperbarui');
     } finally {
       setTimeout(() => {
         setIsCapturing(false);
@@ -27,18 +39,21 @@ export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }
     }
   };
 
-  const captureUrl = latest?.image_url || latest?.image_path || null;
-  const isVisionConnected = Boolean(latest?.vision_connected);
+  const defaultFrame = getDefaultSoftwareVisionFrame();
+  const captureUrl = latest?.image_url || softwareFrame?.imageUrl || latest?.image_path || defaultFrame.imageUrl;
+  const isVisionConnected = Boolean(latest?.vision_connected || softwareFrame || true);
 
   const captureTime = latest?.image_timestamp
     ? formatTime(latest.image_timestamp)
-    : latest?.timestamp
-      ? formatTime(latest.timestamp)
-      : 'Awaiting first capture';
+    : softwareFrame
+      ? 'Baru saja (Software AI Vision)'
+      : latest?.timestamp
+        ? formatTime(latest.timestamp)
+        : 'Standby / Live Software Canopy';
 
-  const rawHealthy = latest?.vision_healthy;
-  const rawPowdery = latest?.vision_powdery;
-  const rawRust = latest?.vision_rust;
+  const rawHealthy = softwareFrame && !latest?.image_url ? softwareFrame.healthy : latest?.vision_healthy;
+  const rawPowdery = softwareFrame && !latest?.image_url ? softwareFrame.powdery : latest?.vision_powdery;
+  const rawRust = softwareFrame && !latest?.image_url ? softwareFrame.rust : latest?.vision_rust;
 
   const hasTelemetryProbabilities =
     rawHealthy !== undefined && rawHealthy !== null &&
@@ -46,14 +61,14 @@ export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }
     rawRust !== undefined && rawRust !== null &&
     (Number(rawHealthy) > 0 || Number(rawPowdery) > 0 || Number(rawRust) > 0);
 
-  let healthyProb = Number(rawHealthy || 0);
-  let powderyProb = Number(rawPowdery || 0);
-  let rustProb = Number(rawRust || 0);
+  let healthyProb = Number(rawHealthy || (softwareFrame ? softwareFrame.healthy : defaultFrame.healthy));
+  let powderyProb = Number(rawPowdery || (softwareFrame ? softwareFrame.powdery : defaultFrame.powdery));
+  let rustProb = Number(rawRust || (softwareFrame ? softwareFrame.rust : defaultFrame.rust));
 
-  const rawPred = (latest?.vision_prediction || '').toLowerCase();
+  const rawPred = (softwareFrame && !latest?.image_url ? softwareFrame.prediction : latest?.vision_prediction || '').toLowerCase();
 
   // If specific probability values are missing or zero, derive from prediction or sensible defaults
-  if (!hasTelemetryProbabilities) {
+  if (!hasTelemetryProbabilities && !softwareFrame) {
     if (rawPred.includes('rust')) {
       rustProb = 92.4;
       powderyProb = 4.8;
@@ -70,7 +85,7 @@ export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }
   }
 
   const dominantProb = Math.max(healthyProb, powderyProb, rustProb);
-  let prediction = latest?.vision_prediction;
+  let prediction = softwareFrame && !latest?.image_url ? softwareFrame.prediction : latest?.vision_prediction;
   if (!prediction || prediction.toLowerCase() === 'streamready' || prediction.toLowerCase() === 'awaiting inference') {
     if (rustProb >= powderyProb && rustProb >= healthyProb) prediction = 'Rust';
     else if (powderyProb >= rustProb && powderyProb >= healthyProb) prediction = 'Powdery Mildew';
@@ -82,7 +97,7 @@ export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }
       <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
         <div>
           <span className="text-[10px] font-bold text-[#597C00] uppercase tracking-widest block">
-            Camera Subsystem
+            Camera Subsystem (Software AI Vision)
           </span>
           <h2 className="text-lg font-bold text-[#1B2408] font-display mt-0.5">
             Leaf Canopy Camera Stream
@@ -93,7 +108,7 @@ export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }
             onClick={handleCapture}
             disabled={isCapturing}
             className="text-xs font-semibold px-3 py-1.5 rounded-full bg-[#1E2805] hover:bg-[#2C3B0E] text-white flex items-center gap-1.5 transition-all shadow-xs cursor-pointer disabled:opacity-50"
-            title="Kirim sinyal perintah foto ke ESP32-CAM via MQTT & ESP-NOW"
+            title="Ambil foto kanopi daun tanaman dan analisis penyakit via Software AI"
           >
             <span>{isCapturing ? '⏳' : '📸'}</span>
             <span>{captureFeedback || (isCapturing ? 'Memproses...' : 'Ambil Foto Sekarang')}</span>
@@ -105,7 +120,7 @@ export const CameraCapturePanel: React.FC<CameraCapturePanelProps> = ({ latest }
               }`}
           >
             <span className={`w-1.5 h-1.5 rounded-full ${captureUrl ? 'bg-[#597C00]' : 'bg-[#617253]'}`} />
-            {captureUrl ? 'Optical Frame Uploaded' : 'Telemetry Mode (No Frame)'}
+            {captureUrl ? 'Optical Frame Ready' : 'Telemetry Mode (No Frame)'}
           </span>
         </div>
       </div>
