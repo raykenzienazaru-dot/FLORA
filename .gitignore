@@ -13,3 +13,4 @@ dashboard/.env.*
 dashboard/data/
 *.keras
 *.tflite
+scratch_deploy/

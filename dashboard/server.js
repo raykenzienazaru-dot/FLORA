@@ -338,11 +338,11 @@ wss.on('connection', (client) => {
 });
 function broadcast(message) { const text = JSON.stringify(message); for (const client of wss.clients) if (client.readyState === 1) client.send(text); }
 
-const mqttUrl = process.env.MQTT_URL;
+const mqttUrl = process.env.MQTT_URL || 'wss://m2da914a.ala.eu-central-1.emqxsl.com:8084/mqtt';
 if (mqttUrl) {
   mqttClient = mqtt.connect(mqttUrl, {
-    username: process.env.MQTT_USERNAME || undefined,
-    password: process.env.MQTT_PASSWORD || undefined,
+    username: process.env.MQTT_USERNAME || 'grenvis_esp32',
+    password: process.env.MQTT_PASSWORD || 'grenvis123',
     rejectUnauthorized: String(process.env.MQTT_REJECT_UNAUTHORIZED || 'true') === 'true',
     reconnectPeriod: 5000
   });

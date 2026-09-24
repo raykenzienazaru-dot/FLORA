@@ -1,19 +1,21 @@
 #include "esp_camera.h"
-#include "dummy_leaf.h"
 
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
 // =====================================================
 // TFLITE CLOUD AI BACKEND (RAILWAY / PUBLIC API)
 // =====================================================
-// Ganti dengan URL deployment Railway Anda setelah deploy, misal:
-// "https://ai-vision-production.up.railway.app/predict"
-// Jika dikosongkan ("") atau offline, firmware otomatis menggunakan fallback lokal.
-const char* AI_BACKEND_URL = "https://ai-vision-production.up.railway.app/predict";
+// API Base URL: https://web-production-e0039.up.railway.app/
+// Swagger Docs: https://web-production-e0039.up.railway.app/docs
+// Endpoint: https://web-production-e0039.up.railway.app/predict
+// Kirim citra daun asli langsung dari kamera OV2640 ke model AI_VISION.tflite
+const char* AI_BACKEND_URL = "https://web-production-e0039.up.railway.app/predict";
 
 // =====================================================
 // AI THINKER ESP32-CAM PIN DEFINITIONS
@@ -129,16 +131,16 @@ typedef struct __attribute__((packed)) {
 } ImageEndPacket;
 
 // =====================================================
-// INIT CAMERA
+// INIT HARDWARE CAMERA (OV2640)
 // =====================================================
 
 bool initCamera() {
   Serial.println();
-  Serial.println("==============================");
-  Serial.println("CAMERA INIT (FLORA SENSOR)");
-  Serial.println("==============================");
+  Serial.println("========================================");
+  Serial.println("CAMERA INIT (HARDWARE OV2640 SENSOR)");
+  Serial.println("========================================");
 
-  // 1. Hardware Power-Cycle sensor OV2640 via PWDN (GPIO 32)
+  // Power cycle sensor OV2640 via PWDN (GPIO 32)
   if (PWDN_GPIO_NUM != -1) {
     pinMode(PWDN_GPIO_NUM, OUTPUT);
     digitalWrite(PWDN_GPIO_NUM, HIGH); // Power OFF sensor
@@ -169,54 +171,58 @@ bool initCamera() {
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
 
-  config.xclk_freq_hz = 20000000;
   config.pixel_format = PIXFORMAT_JPEG;
 
   if (psramFound()) {
-    Serial.println("[CAM] PSRAM ditemukan -> Frame Size QVGA / High Quality");
-    config.frame_size   = FRAMESIZE_QVGA; // 320x240
-    config.jpeg_quality = 12;
+    Serial.println("[CAM] PSRAM terdeteksi -> Mode High Quality QVGA");
+    config.frame_size   = FRAMESIZE_QVGA; // 320x240 (Optimal untuk TFLite 224x224)
+    config.jpeg_quality = 10;
     config.fb_count     = 2;
     config.fb_location  = CAMERA_FB_IN_PSRAM;
     config.grab_mode    = CAMERA_GRAB_LATEST;
   } else {
-    Serial.println("[CAM] No PSRAM -> Fallback");
+    Serial.println("[CAM] PSRAM tidak aktif -> Alokasi internal DRAM");
     config.frame_size   = FRAMESIZE_QVGA;
-    config.jpeg_quality = 15;
+    config.jpeg_quality = 12;
     config.fb_count     = 1;
     config.fb_location  = CAMERA_FB_IN_DRAM;
+    config.grab_mode    = CAMERA_GRAB_WHEN_EMPTY;
   }
 
-  // Coba inisialisasi (up to 3x percobaan dengan fallback 10MHz jika 20MHz gagal)
+  // Coba inisialisasi: Percobaan 1 (20MHz), Percobaan 2 (10MHz), Percobaan 3 (16.5MHz)
   esp_err_t err = ESP_FAIL;
-  for (int attempt = 1; attempt <= 3; attempt++) {
-    Serial.printf("[CAM] Mencoba probe sensor kamera (percobaan %d/3, XCLK: %d MHz)...\n", 
-                  attempt, config.xclk_freq_hz / 1000000);
-    err = esp_camera_init(&config);
-    if (err == ESP_OK) break;
+  int freqs[] = { 20000000, 10000000, 16500000 };
 
-    Serial.printf("[CAM] Probe gagal (0x%x), deinit dan reset sensor...\n", err);
+  for (int attempt = 0; attempt < 3; attempt++) {
+    config.xclk_freq_hz = freqs[attempt];
+    Serial.printf("[CAM] Probe sensor OV2640 (Percobaan %d/3, XCLK: %d MHz)...\n", 
+                  attempt + 1, config.xclk_freq_hz / 1000000);
+
+    err = esp_camera_init(&config);
+    if (err == ESP_OK) {
+      Serial.printf("[CAM] Probe BERHASIL pada XCLK %d MHz!\n", config.xclk_freq_hz / 1000000);
+      break;
+    }
+
+    Serial.printf("[CAM] Probe gagal (Error: 0x%x). Deinit & reset daya...\n", err);
     esp_camera_deinit();
-    delay(150);
+    delay(200);
 
     // Reset daya modul sensor
     if (PWDN_GPIO_NUM != -1) {
       digitalWrite(PWDN_GPIO_NUM, HIGH);
       delay(100);
       digitalWrite(PWDN_GPIO_NUM, LOW);
-      delay(100);
-    }
-
-    // Pada percobaan berikutnya, turunkan frekuensi XCLK ke 10MHz (sangat efektif untuk SCCB probe)
-    if (attempt >= 1) {
-      config.xclk_freq_hz = 10000000;
+      delay(150);
     }
   }
 
   if (err != ESP_OK) {
-    Serial.printf("[CAM] Probe sensor gagal: 0x%x\n", err);
-    Serial.println("[CAM] Mengaktifkan fallback DUMMY IMAGE (320x240 Botanical JPEG).");
-    Serial.println("[CAM] ESP-NOW, Flash LED, dan AI Classification tetap berjalan 100%!");
+    Serial.printf("[CAM ERROR] Hardware OV2640 GAGAL diinisialisasi (0x%x)!\n", err);
+    Serial.println("[TROUBLESHOOTING]:");
+    Serial.println("  1. Pastikan pita kamera OV2640 terkunci rapat di konektor FPC board.");
+    Serial.println("  2. Pastikan di Arduino IDE: Tools > Board: 'AI Thinker ESP32-CAM' & 'PSRAM: Enabled'.");
+    Serial.println("  3. Gunakan catu daya stabil 5V 2A ke pin 5V ESP32-CAM, BUKAN 3.3V.");
     cameraHardwareReady = false;
     return false;
   }
@@ -232,11 +238,10 @@ bool initCamera() {
   }
 
   cameraHardwareReady = true;
-  Serial.println("[CAM] CAMERA READY (HARDWARE OV2640 AKTIF)");
+  Serial.println("[CAM] CAMERA READY (HARDWARE OV2640 AKTIF & SIAP CAPTURE)");
   return true;
 }
 
-// =====================================================
 // =====================================================
 // WIFI (SINKRONISASI CHANNEL OTOMATIS KE ESP32 UTAMA)
 // =====================================================
@@ -275,6 +280,7 @@ void onEspNowReceive(
     Serial.println(">>> [ESP-NOW] TRIGGER FOTO DITERIMA DARI WEB / ESP32-MAIN! <<<");
   }
 }
+
 bool initESPNow() {
   Serial.println();
   Serial.println("==============================");
@@ -287,7 +293,7 @@ bool initESPNow() {
 
   // Coba sinkronisasi channel otomatis via WiFi AP yang sama dengan ESP32 Main
   if (strlen(WIFI_SSID) > 0) {
-    Serial.printf("[WIFI] Sinkronisasi channel via AP '%s'...\n", WIFI_SSID);
+    Serial.printf("[WIFI] Menghubungkan ke AP '%s' untuk internet & channel...\n", WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     uint32_t startMs = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - startMs < 5000) {
@@ -297,9 +303,9 @@ bool initESPNow() {
     Serial.println();
     if (WiFi.status() == WL_CONNECTED) {
       activeChannel = WiFi.channel();
-      Serial.printf("[WIFI] Terhubung! Channel otomatis tersinkron: %d\n", activeChannel);
+      Serial.printf("[WIFI] Terhubung! IP: %s | Channel: %d\n", WiFi.localIP().toString().c_str(), activeChannel);
     } else {
-      Serial.printf("[WIFI] Menggunakan channel default: %d\n", ESP_NOW_CHANNEL);
+      Serial.printf("[WIFI] Belum terhubung. Menggunakan channel default: %d\n", ESP_NOW_CHANNEL);
       esp_wifi_set_channel(ESP_NOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
     }
   } else {
@@ -338,12 +344,18 @@ bool initESPNow() {
 // =====================================================
 
 bool queryCloudAiVision(const uint8_t* jpegBuf, size_t jpegLen, VisionResultPacket* outResult) {
-  if (strlen(AI_BACKEND_URL) == 0 || WiFi.status() != WL_CONNECTED || jpegBuf == nullptr || jpegLen == 0) {
+  if (strlen(AI_BACKEND_URL) == 0 || jpegBuf == nullptr || jpegLen == 0) {
+    Serial.println("[AI-CLOUD] Parameter buffer gambar kosong / URL belum diset");
+    return false;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[AI-CLOUD] WiFi tidak terhubung ke internet, tidak dapat mengakses Railway Cloud Backend.");
     return false;
   }
 
   Serial.println();
-  Serial.printf("[AI-CLOUD] Mengirim %u byte JPEG ke TFLite Backend...\n", (unsigned int)jpegLen);
+  Serial.printf("[AI-CLOUD] Mengirim %u byte JPEG asli ke TFLite Backend...\n", (unsigned int)jpegLen);
   Serial.printf("[AI-CLOUD] Endpoint: %s\n", AI_BACKEND_URL);
 
   WiFiClientSecure client;
@@ -356,7 +368,7 @@ bool queryCloudAiVision(const uint8_t* jpegBuf, size_t jpegLen, VisionResultPack
   }
 
   http.addHeader("Content-Type", "image/jpeg");
-  http.setTimeout(8000); // 8 detik timeout
+  http.setTimeout(10000); // 10 detik timeout
 
   int httpCode = http.POST((uint8_t*)jpegBuf, jpegLen);
   if (httpCode == HTTP_CODE_OK || httpCode == 200) {
@@ -418,30 +430,16 @@ void sendScanResult(uint32_t scanNumber, uint32_t imageSize, const VisionResultP
     packet.healthy    = cloudResult->healthy;
     packet.powdery    = cloudResult->powdery;
     packet.rust       = cloudResult->rust;
-    Serial.println("[AI] Memakai hasil inferensi TFLite Railway!");
+    Serial.println("[AI] Mengirim hasil inferensi TFLite Railway asli!");
   } else {
-    // Fallback lokal jika backend Railway sedang offline / belum deploy
-    int cycle = (scanNumber - 1) % 3;
-    float h = 0, p = 0, r = 0;
-    const char* pred = "Healthy";
-    if (cycle == 0) {
-      h = 89.40; p = 6.20; r = 4.40;
-      pred = "Healthy";
-    } else if (cycle == 1) {
-      h = 14.50; p = 78.80; r = 6.70;
-      pred = "Powdery";
-    } else {
-      h = 9.20; p = 12.30; r = 78.50;
-      pred = "Rust";
-    }
-
-    strncpy(packet.visionClass, pred, sizeof(packet.visionClass) - 1);
+    // Cloud offline / belum ada hasil inferensi
+    strncpy(packet.visionClass, "Unprocessed", sizeof(packet.visionClass) - 1);
     packet.visionClass[sizeof(packet.visionClass) - 1] = '\0';
-    packet.confidence = (cycle == 0) ? h : ((cycle == 1) ? p : r);
-    packet.healthy    = h;
-    packet.powdery    = p;
-    packet.rust       = r;
-    Serial.println("[AI] Memakai hasil fallback lokal cerdas.");
+    packet.confidence = 0.0;
+    packet.healthy    = 0.0;
+    packet.powdery    = 0.0;
+    packet.rust       = 0.0;
+    Serial.println("[AI] Backend Cloud belum merespon (Tanpa data dummy).");
   }
 
   esp_err_t result = esp_now_send(receiverMAC, (uint8_t*)&packet, sizeof(packet));
@@ -505,7 +503,7 @@ void sendImageBufferESPNow(const uint8_t* buf, uint32_t imageSize, uint32_t scan
       Serial.printf("[IMAGE] Chunk error: %u\n", i);
     }
 
-    // Delay singkat agar radio tidak kebanjiran buffer
+    // Delay singkat agar radio buffer tidak overflow
     delay(15);
 
     if (i % 10 == 0 || i == totalChunks - 1) {
@@ -524,59 +522,58 @@ void sendImageBufferESPNow(const uint8_t* buf, uint32_t imageSize, uint32_t scan
 }
 
 // =====================================================
-// CAPTURE & STREAM IMAGE
+// CAPTURE & STREAM REAL HARDWARE IMAGE
 // =====================================================
 
 void captureAndSend() {
   scanCounter++;
   Serial.println();
-  Serial.println("==============================");
-  Serial.printf("SCAN #%lu: CAPTURING IMAGE\n", (unsigned long)scanCounter);
-  Serial.println("==============================");
+  Serial.println("========================================");
+  Serial.printf("SCAN #%lu: CAPTURING REAL CAMERA IMAGE\n", (unsigned long)scanCounter);
+  Serial.println("========================================");
 
-  // Flash LED singkat untuk efek pencahayaan
-  digitalWrite(FLASH_LED_PIN, HIGH);
-  delay(150);
-  digitalWrite(FLASH_LED_PIN, LOW);
-
-  const uint8_t* imageBuffer = nullptr;
-  uint32_t imageSize = 0;
-  camera_fb_t* fb = nullptr;
-
-  if (cameraHardwareReady) {
-    fb = esp_camera_fb_get();
-    if (fb && fb->len > 0) {
-      imageBuffer = fb->buf;
-      imageSize = fb->len;
-      Serial.printf("[CAM] Real OV2640 JPEG captured: %u bytes\n", (unsigned int)imageSize);
-    } else {
-      Serial.println("[CAM] Real capture gagal, fallback ke Dummy Leaf JPEG.");
+  if (!cameraHardwareReady) {
+    Serial.println("[CAM] Kamera belum siap, mencoba re-probe OV2640...");
+    if (!initCamera()) {
+      Serial.println("[CAM ERROR] Sensor OV2640 fisik tidak terhubung. Pembatalan capture.");
+      return;
     }
   }
 
-  // Jika sensor kamera fisik tidak terpasang/gagal probe, gunakan Dummy JPEG dari PROGMEM
-  if (imageBuffer == nullptr || imageSize == 0) {
-    imageBuffer = DUMMY_LEAF_JPEG;
-    imageSize = DUMMY_LEAF_JPEG_LEN;
-    Serial.printf("[CAM] Menggunakan Dummy Leaf JPEG: %u bytes\n", (unsigned int)imageSize);
+  // Flash LED singkat untuk efek pencahayaan foto
+  digitalWrite(FLASH_LED_PIN, HIGH);
+  delay(120);
+
+  // Ambil frame asli dari sensor kamera OV2640
+  camera_fb_t* fb = esp_camera_fb_get();
+
+  // Matikan Flash LED segera setelah exposure
+  digitalWrite(FLASH_LED_PIN, LOW);
+
+  if (!fb || fb->len == 0) {
+    Serial.println("[CAM ERROR] Pengambilan gambar dari sensor OV2640 gagal!");
+    if (fb) esp_camera_fb_return(fb);
+    return;
   }
 
-  // 1. Jalankan inferensi TFLite Cloud di Railway jika backend aktif
+  const uint8_t* imageBuffer = fb->buf;
+  uint32_t imageSize = fb->len;
+  Serial.printf("[CAM SUCCESS] Berhasil capture foto asli OV2640: %u bytes\n", (unsigned int)imageSize);
+
+  // 1. Jalankan inferensi TFLite Cloud di Railway jika WiFi & backend aktif
   VisionResultPacket cloudResult = {};
   bool hasCloud = queryCloudAiVision(imageBuffer, imageSize, &cloudResult);
 
-  // 2. Kirim frame gambar via ESP-NOW terlebih dahulu
+  // 2. Kirim frame gambar asli via ESP-NOW ke ESP32 Utama
   sendImageBufferESPNow(imageBuffer, imageSize, scanCounter);
   delay(50);
 
-  // 3. Kirim hasil klasifikasi AI (dari TFLite Railway atau local) setelah foto selesai dikirim
+  // 3. Kirim hasil klasifikasi AI asli
   sendScanResult(scanCounter, imageSize, hasCloud ? &cloudResult : nullptr);
 
-  // Bebaskan framebuffer jika memakai kamera fisik
-  if (fb != nullptr) {
-    esp_camera_fb_return(fb);
-    Serial.println("[CAM] Frame complete & memory released");
-  }
+  // Bebaskan framebuffer kamera
+  esp_camera_fb_return(fb);
+  Serial.println("[CAM] Frame selesai & memori framebuffer dibebaskan");
 }
 
 // =====================================================
@@ -584,23 +581,26 @@ void captureAndSend() {
 // =====================================================
 
 void setup() {
+  // Matikan brownout detector agar modul tidak reset saat lonjakan arus kamera/flash/WiFi
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
   Serial.begin(115200);
   delay(1000);
 
   Serial.println();
-  Serial.println("==============================");
-  Serial.println("FLORA ESP32-CAM SENSOR NODE");
-  Serial.println("==============================");
+  Serial.println("========================================");
+  Serial.println("GRENVIS FLORA ESP32-CAM SENSOR NODE");
+  Serial.println("PURE HARDWARE CAMERA (NO DUMMY IMAGE)");
+  Serial.println("========================================");
 
   pinMode(FLASH_LED_PIN, OUTPUT);
   digitalWrite(FLASH_LED_PIN, LOW);
 
   if (!initCamera()) {
-    Serial.println("[SYSTEM] PERINGATAN: Sensor kamera OV2640 fisik tidak terdeteksi!");
-    Serial.println("[SYSTEM] Mengaktifkan DUMMY BOTANICAL IMAGE (320x240 JPEG)");
-    Serial.println("[SYSTEM] Transmisi ESP-NOW, Flash LED, & AI Vision tetap berfungsi 100%!");
+    Serial.println("[SYSTEM] PERINGATAN: Sensor kamera OV2640 fisik belum terdeteksi!");
+    Serial.println("[SYSTEM] Periksa kabel pita & daya 5V. Ulangi inisialisasi saat capture dipanggil.");
   } else {
-    Serial.println("[SYSTEM] Hardware OV2640 terdeteksi & siap.");
+    Serial.println("[SYSTEM] Hardware OV2640 terdeteksi & siap 100%.");
   }
 
   if (!initESPNow()) {
@@ -609,10 +609,10 @@ void setup() {
   }
 
   Serial.println();
-  Serial.println("==============================");
-  Serial.println("SYSTEM READY (PURE SENSOR STREAMER)");
-  Serial.println("Ketik 'A' di Serial Monitor untuk uji capture.");
-  Serial.println("==============================");
+  Serial.println("========================================");
+  Serial.println("SYSTEM READY (REAL HARDWARE STREAMER)");
+  Serial.println("Ketik 'A' di Serial Monitor untuk uji capture fisik.");
+  Serial.println("========================================");
 }
 
 // =====================================================

@@ -130,11 +130,21 @@ export const AiVisionPanel: React.FC<AiVisionPanelProps> = ({ latest }) => {
         </div>
       </div>
 
-      {/* Non-diagnostic Agronomic Disclaimer */}
-      <div className="mt-4 pt-3 border-t border-[#E4EBE0]">
-        <p className="text-[11px] text-[#617253] leading-relaxed m-0">
-          Klasifikasi visual diproses berdasarkan fitur model <code className="text-[#597C00] font-mono text-[10px]">AI_VISION_INT8</code> (fitur kelas: Healthy, Powdery Mildew, Leaf Rust) untuk pemantauan dini kesehatan kanopi daun.
+      {/* Non-diagnostic Agronomic Disclaimer & Cloud AI Status */}
+      <div className="mt-4 pt-3 border-t border-[#E4EBE0] flex flex-wrap justify-between items-center gap-2">
+        <p className="text-[11px] text-[#617253] leading-relaxed m-0 flex-1">
+          Klasifikasi visual diproses berdasarkan fitur model <code className="text-[#597C00] font-mono text-[10px]">AI_VISION.tflite</code> (fitur kelas: Healthy, Powdery Mildew, Leaf Rust) untuk pemantauan dini kesehatan kanopi daun.
         </p>
+        <a
+          href="https://web-production-e0039.up.railway.app/docs"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-1 text-[10px] font-bold text-[#597C00] hover:text-[#425C00] bg-[#EAF4E8] hover:bg-[#DDF0D9] px-2.5 py-1 rounded-lg border border-[#C4E1BF] transition-colors"
+          title="Buka Swagger UI untuk uji coba inferensi model langsung di browser"
+        >
+          <span>Swagger Model UI</span>
+          <span>↗</span>
+        </a>
       </div>
     </section>
   );
