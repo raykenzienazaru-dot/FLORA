@@ -225,14 +225,6 @@ void onEspNowReceive(
     Serial.println(">>> [ESP-NOW] TRIGGER FOTO DITERIMA DARI WEB / ESP32-MAIN! <<<");
   }
 }
-
-void onEspNowSend(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  if (status != ESP_NOW_SEND_SUCCESS) {
-    Serial.println("[ESP-NOW] [PERINGATAN] Pengiriman ESP-NOW GAGAL!");
-    Serial.println("  -> Pastikan MAC ESP32-Main dan Channel WiFi sama persis!");
-  }
-}
-
 bool initESPNow() {
   Serial.println();
   Serial.println("==============================");
@@ -248,7 +240,7 @@ bool initESPNow() {
     Serial.printf("[WIFI] Sinkronisasi channel via AP '%s'...\n", WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     uint32_t startMs = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - startMs < 6000) {
+    while (WiFi.status() != WL_CONNECTED && millis() - startMs < 5000) {
       delay(250);
       Serial.print(".");
     }
@@ -257,7 +249,7 @@ bool initESPNow() {
       activeChannel = WiFi.channel();
       Serial.printf("[WIFI] Terhubung! Channel otomatis tersinkron: %d\n", activeChannel);
     } else {
-      Serial.printf("[WIFI] Gagal terhubung ke WiFi, menggunakan channel fallback: %d\n", ESP_NOW_CHANNEL);
+      Serial.printf("[WIFI] Menggunakan channel default: %d\n", ESP_NOW_CHANNEL);
       esp_wifi_set_channel(ESP_NOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
     }
   } else {
@@ -276,7 +268,6 @@ bool initESPNow() {
   }
 
   esp_now_register_recv_cb(onEspNowReceive);
-  esp_now_register_send_cb(onEspNowSend);
 
   esp_now_peer_info_t peerInfo = {};
   memcpy(peerInfo.peer_addr, receiverMAC, 6);
