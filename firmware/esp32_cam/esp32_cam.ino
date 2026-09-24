@@ -187,6 +187,14 @@ bool initCamera() {
 }
 
 // =====================================================
+// =====================================================
+// WIFI (SINKRONISASI CHANNEL OTOMATIS KE ESP32 UTAMA)
+// =====================================================
+// Bila diisi sama dengan ESP32 Utama, ESP32-CAM akan otomatis memakai channel yang sama.
+const char* WIFI_SSID     = ".";
+const char* WIFI_PASSWORD = "01020304";
+
+// =====================================================
 // INIT ESP-NOW
 // =====================================================
 
@@ -202,6 +210,13 @@ void onEspNowReceive(
   }
 }
 
+void onEspNowSend(const uint8_t *mac_addr, esp_now_send_status_t status) {
+  if (status != ESP_NOW_SEND_SUCCESS) {
+    Serial.println("[ESP-NOW] [PERINGATAN] Pengiriman ESP-NOW GAGAL!");
+    Serial.println("  -> Pastikan MAC ESP32-Main dan Channel WiFi sama persis!");
+  }
+}
+
 bool initESPNow() {
   Serial.println();
   Serial.println("==============================");
@@ -209,13 +224,35 @@ bool initESPNow() {
   Serial.println("==============================");
 
   WiFi.mode(WIFI_STA);
-  esp_wifi_set_channel(ESP_NOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
-  delay(300);
 
-  Serial.print("ESP32-CAM MAC : ");
-  Serial.println(WiFi.macAddress());
-  Serial.print("WiFi Channel  : ");
-  Serial.println(WiFi.channel());
+  uint8_t activeChannel = ESP_NOW_CHANNEL;
+
+  // Coba sinkronisasi channel otomatis via WiFi AP yang sama dengan ESP32 Main
+  if (strlen(WIFI_SSID) > 0) {
+    Serial.printf("[WIFI] Sinkronisasi channel via AP '%s'...\n", WIFI_SSID);
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    uint32_t startMs = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - startMs < 6000) {
+      delay(250);
+      Serial.print(".");
+    }
+    Serial.println();
+    if (WiFi.status() == WL_CONNECTED) {
+      activeChannel = WiFi.channel();
+      Serial.printf("[WIFI] Terhubung! Channel otomatis tersinkron: %d\n", activeChannel);
+    } else {
+      Serial.printf("[WIFI] Gagal terhubung ke WiFi, menggunakan channel fallback: %d\n", ESP_NOW_CHANNEL);
+      esp_wifi_set_channel(ESP_NOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+    }
+  } else {
+    esp_wifi_set_channel(ESP_NOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  }
+
+  Serial.printf("ESP32-CAM MAC : %s\n", WiFi.macAddress().c_str());
+  Serial.printf("Target MAC    : %02X:%02X:%02X:%02X:%02X:%02X\n",
+    receiverMAC[0], receiverMAC[1], receiverMAC[2],
+    receiverMAC[3], receiverMAC[4], receiverMAC[5]);
+  Serial.printf("WiFi Channel  : %d\n", activeChannel);
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("[ESP-NOW] Init FAILED!");
@@ -223,10 +260,11 @@ bool initESPNow() {
   }
 
   esp_now_register_recv_cb(onEspNowReceive);
+  esp_now_register_send_cb(onEspNowSend);
 
   esp_now_peer_info_t peerInfo = {};
   memcpy(peerInfo.peer_addr, receiverMAC, 6);
-  peerInfo.channel = ESP_NOW_CHANNEL;
+  peerInfo.channel = activeChannel;
   peerInfo.encrypt = false;
 
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {

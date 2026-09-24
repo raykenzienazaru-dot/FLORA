@@ -287,12 +287,56 @@ if (mqttUrl) {
     reconnectPeriod: 5000
   });
   const client = mqttClient;
-  client.on('connect', () => { mqttState = 'CONNECTED'; client.subscribe([process.env.MQTT_TOPIC || 'grenvis/sensor/data', process.env.MQTT_STATUS_TOPIC || 'grenvis/sensor/status']); broadcast({type:'mqtt', data:mqttState}); });
+  client.on('connect', () => {
+    mqttState = 'CONNECTED';
+    client.subscribe([
+      process.env.MQTT_TOPIC || 'grenvis/sensor/data',
+      process.env.MQTT_STATUS_TOPIC || 'grenvis/sensor/status',
+      process.env.MQTT_VISION_TOPIC || 'grenvis/vision/data',
+      process.env.MQTT_IMAGE_TOPIC || 'grenvis/vision/image',
+    ]);
+    broadcast({ type: 'mqtt', data: mqttState });
+  });
   client.on('reconnect', () => { mqttState = 'RECONNECTING'; });
-  client.on('offline', () => { mqttState = 'DISCONNECTED'; broadcast({type:'mqtt', data:mqttState}); });
+  client.on('offline', () => { mqttState = 'DISCONNECTED'; broadcast({ type: 'mqtt', data: mqttState }); });
   client.on('error', err => console.error('MQTT:', err.message));
   client.on('message', (topic, buffer) => {
     if (topic === (process.env.MQTT_STATUS_TOPIC || 'grenvis/sensor/status')) return;
+
+    if (topic === (process.env.MQTT_IMAGE_TOPIC || 'grenvis/vision/image')) {
+      const base64 = buffer.toString('base64');
+      const dataUrl = `data:image/jpeg;base64,${base64}`;
+      const imgTs = new Date().toISOString();
+      if (history.length) {
+        history[history.length - 1].image_url = dataUrl;
+        history[history.length - 1].image_timestamp = imgTs;
+      }
+      broadcast({ type: 'image', data: { image_url: dataUrl, image_timestamp: imgTs } });
+      return;
+    }
+
+    if (topic === (process.env.MQTT_VISION_TOPIC || 'grenvis/vision/data')) {
+      try {
+        const raw = JSON.parse(buffer.toString());
+        const visionData = {
+          vision_scan: Number(raw.vision_scan ?? raw.scan ?? 0),
+          vision_prediction: String(raw.vision_prediction ?? raw.prediction ?? 'Unknown'),
+          vision_confidence: Number(raw.vision_confidence ?? raw.confidence ?? 0),
+          vision_healthy: Number(raw.vision_healthy ?? raw.healthy ?? 0),
+          vision_powdery: Number(raw.vision_powdery ?? raw.powdery ?? 0),
+          vision_rust: Number(raw.vision_rust ?? raw.rust ?? 0),
+          vision_connected: true,
+        };
+        if (history.length) {
+          Object.assign(history[history.length - 1], visionData);
+        }
+        broadcast({ type: 'vision', data: visionData });
+      } catch (err) {
+        console.error('Vision data parse error:', err.message);
+      }
+      return;
+    }
+
     try { ingest(JSON.parse(buffer.toString())); } catch (err) { console.error('Telemetry ditolak:', err.message); }
   });
 } else {

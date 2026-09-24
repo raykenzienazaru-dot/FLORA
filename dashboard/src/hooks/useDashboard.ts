@@ -174,8 +174,6 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
   const [deviceWsStatus, setDeviceWsStatus] = useState<'connecting' | 'connected' | 'disconnected'>('connecting');
 
   useEffect(() => {
-    if (liveWsStatus === 'connected') return;
-
     deviceMqtt.start();
     return deviceMqtt.subscribe((message) => {
       if (message.type === 'mqtt') {
@@ -189,7 +187,7 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
       }
       handleMqttMessage(message);
     });
-  }, [handleMqttMessage, liveWsStatus]);
+  }, [handleMqttMessage]);
 
   const wsStatus: 'connecting' | 'connected' | 'disconnected' =
     liveWsStatus === 'connected' || deviceWsStatus === 'connected'
