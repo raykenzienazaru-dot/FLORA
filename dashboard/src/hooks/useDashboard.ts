@@ -103,7 +103,11 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
           const history = appendLocalTelemetry(msg.data);
           const wateringEvents = prev?.wateringEvents || [];
           return {
-            latest: msg.data,
+            latest: {
+              ...msg.data,
+              image_url: msg.data.image_url ?? prev?.latest?.image_url ?? null,
+              image_timestamp: msg.data.image_timestamp ?? prev?.latest?.image_timestamp ?? null,
+            },
             history,
             summary: summarizeLocalHistory(history, wateringEvents.length),
             mqtt: currentMqtt,

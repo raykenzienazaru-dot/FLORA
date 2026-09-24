@@ -39,8 +39,19 @@
     <section class="panel capture-panel" id="cameraCapture">
       <div class="panel-head"><div><p class="eyebrow">ESP32-CAM CAPTURE</p><h2>Latest leaf capture</h2></div><span id="captureStatus" class="badge">WAITING FOR IMAGE</span></div>
       <div class="capture-layout">
-        <div class="capture-frame"><img id="leafCapture" alt="Latest leaf captured by ESP32-CAM" hidden><div id="capturePlaceholder" class="capture-placeholder"><span class="leaf-mark">⌁</span><b>No image captured yet</b><p>Foto terbaru dari ESP32-CAM akan tampil di area ini.</p></div><span class="camera-label">ESP32-CAM · LIVE CAPTURE</span></div>
-        <div class="capture-info"><div><small>CAPTURE TIME</small><b id="captureTime">—</b></div><div><small>AI DETECTED PATTERN</small><b id="capturePrediction">Waiting</b></div><div><small>HIGHEST PROBABILITY</small><b id="captureProbability">—%</b></div><p>Gambar digunakan sebagai dukungan inspeksi visual. Hasil AI bukan diagnosis penyakit yang pasti.</p></div>
+        <div class="capture-frame"><img id="leafCapture" alt="Latest leaf captured by ESP32-CAM" hidden><div id="capturePlaceholder" class="capture-placeholder"><span class="leaf-mark">⌁</span><b>No image captured yet</b><p>Foto terbaru dari ESP32-CAM akan tampil di area ini. Hasil Healthy, Powdery, dan Rust akan muncul otomatis setelah foto terunggah.</p></div><span class="camera-label">ESP32-CAM · LIVE CAPTURE</span></div>
+        <div class="capture-info">
+          <div><small>CAPTURE TIME</small><b id="captureTime">—</b></div>
+          <div><small>AI DETECTED PATTERN</small><b id="capturePrediction">Waiting</b></div>
+          <div><small>HIGHEST PROBABILITY</small><b id="captureProbability">—%</b></div>
+          <div id="captureVisionBreakdown" class="capture-vision-box" hidden>
+            <small style="margin-bottom:8px;font-weight:700">CLASSIFICATION BREAKDOWN</small>
+            <div class="cap-bar-item"><div class="bar-title"><span>Healthy</span><b id="capHealthyVal">—%</b></div><div class="track"><i id="capHealthyBar" style="width:0%;background:#7eb865"></i></div></div>
+            <div class="cap-bar-item"><div class="bar-title"><span>Powdery</span><b id="capPowderyVal">—%</b></div><div class="track"><i id="capPowderyBar" style="width:0%;background:#d4ad51"></i></div></div>
+            <div class="cap-bar-item"><div class="bar-title"><span>Rust</span><b id="capRustVal">—%</b></div><div class="track"><i id="capRustBar" style="width:0%;background:#bd635c"></i></div></div>
+          </div>
+          <p>Gambar digunakan sebagai dukungan inspeksi visual. Hasil AI bukan diagnosis penyakit yang pasti.</p>
+        </div>
       </div>
     </section>
 
