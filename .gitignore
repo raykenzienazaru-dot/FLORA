@@ -11,3 +11,5 @@ dashboard/.env
 dashboard/.env.*
 !dashboard/.env.example
 dashboard/data/
+*.keras
+*.tflite

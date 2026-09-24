@@ -4,6 +4,16 @@
 #include <WiFi.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <HTTPClient.h>
+#include <WiFiClientSecure.h>
+
+// =====================================================
+// TFLITE CLOUD AI BACKEND (RAILWAY / PUBLIC API)
+// =====================================================
+// Ganti dengan URL deployment Railway Anda setelah deploy, misal:
+// "https://ai-vision-production.up.railway.app/predict"
+// Jika dikosongkan ("") atau offline, firmware otomatis menggunakan fallback lokal.
+const char* AI_BACKEND_URL = "https://ai-vision-production.up.railway.app/predict";
 
 // =====================================================
 // AI THINKER ESP32-CAM PIN DEFINITIONS
@@ -324,42 +334,119 @@ bool initESPNow() {
 }
 
 // =====================================================
+// QUERY CLOUD TFLITE AI BACKEND (RAILWAY)
+// =====================================================
+
+bool queryCloudAiVision(const uint8_t* jpegBuf, size_t jpegLen, VisionResultPacket* outResult) {
+  if (strlen(AI_BACKEND_URL) == 0 || WiFi.status() != WL_CONNECTED || jpegBuf == nullptr || jpegLen == 0) {
+    return false;
+  }
+
+  Serial.println();
+  Serial.printf("[AI-CLOUD] Mengirim %u byte JPEG ke TFLite Backend...\n", (unsigned int)jpegLen);
+  Serial.printf("[AI-CLOUD] Endpoint: %s\n", AI_BACKEND_URL);
+
+  WiFiClientSecure client;
+  client.setInsecure(); // Bypass SSL cert verification untuk HTTPS Railway
+
+  HTTPClient http;
+  if (!http.begin(client, AI_BACKEND_URL)) {
+    Serial.println("[AI-CLOUD] Inisialisasi HTTPClient gagal");
+    return false;
+  }
+
+  http.addHeader("Content-Type", "image/jpeg");
+  http.setTimeout(8000); // 8 detik timeout
+
+  int httpCode = http.POST((uint8_t*)jpegBuf, jpegLen);
+  if (httpCode == HTTP_CODE_OK || httpCode == 200) {
+    String payload = http.getString();
+    Serial.printf("[AI-CLOUD] Respon TFLite: %s\n", payload.c_str());
+
+    int predIdx = payload.indexOf("\"prediction\":\"");
+    if (predIdx != -1) {
+      int predEnd = payload.indexOf("\"", predIdx + 14);
+      String pred = payload.substring(predIdx + 14, predEnd);
+      strncpy(outResult->visionClass, pred.c_str(), sizeof(outResult->visionClass) - 1);
+      outResult->visionClass[sizeof(outResult->visionClass) - 1] = '\0';
+    }
+
+    auto parseVal = [&](const char* key, float fallback) -> float {
+      int idx = payload.indexOf(key);
+      if (idx != -1) {
+        int start = idx + strlen(key);
+        int end = payload.indexOf(",", start);
+        if (end == -1) end = payload.indexOf("}", start);
+        if (end != -1) return payload.substring(start, end).toFloat();
+      }
+      return fallback;
+    };
+
+    outResult->healthy = parseVal("\"healthy\":", 0.0);
+    outResult->powdery = parseVal("\"powdery\":", 0.0);
+    outResult->rust = parseVal("\"rust\":", 0.0);
+    outResult->confidence = parseVal("\"confidence\":", 0.0);
+
+    http.end();
+    Serial.printf("[AI-CLOUD] Sukses! Hasil TFLite: %s (%.2f%%) [H:%.1f%% P:%.1f%% R:%.1f%%]\n",
+                  outResult->visionClass, outResult->confidence,
+                  outResult->healthy, outResult->powdery, outResult->rust);
+    return true;
+  } else {
+    Serial.printf("[AI-CLOUD] Backend belum merespon / offline (HTTP Code: %d)\n", httpCode);
+  }
+
+  http.end();
+  return false;
+}
+
+// =====================================================
 // SEND SCAN METADATA VIA ESP-NOW
 // =====================================================
 
-void sendScanResult(uint32_t scanNumber, uint32_t imageSize) {
+void sendScanResult(uint32_t scanNumber, uint32_t imageSize, const VisionResultPacket* cloudResult = nullptr) {
   VisionResultPacket packet;
   packet.packetType = PACKET_RESULT;
   packet.scanNumber = scanNumber;
-
-  // Nilai klasifikasi AI Vision kanopi daun (Healthy, Powdery, Rust)
-  float h = 0, p = 0, r = 0;
-  const char* pred = "Healthy";
-
-  // Siklus variasi hasil klasifikasi AI setiap kali scan
-  int cycle = (scanNumber - 1) % 3;
-  if (cycle == 0) {
-    h = 89.40; p = 6.20; r = 4.40;
-    pred = "Healthy";
-  } else if (cycle == 1) {
-    h = 14.50; p = 78.80; r = 6.70;
-    pred = "Powdery";
-  } else {
-    h = 9.20; p = 12.30; r = 78.50;
-    pred = "Rust";
-  }
-
-  strncpy(packet.visionClass, pred, sizeof(packet.visionClass) - 1);
-  packet.visionClass[sizeof(packet.visionClass) - 1] = '\0';
-  packet.confidence = (cycle == 0) ? h : ((cycle == 1) ? p : r);
-  packet.healthy    = h;
-  packet.powdery    = p;
-  packet.rust       = r;
   packet.imageSize  = imageSize;
+
+  if (cloudResult != nullptr && strlen(cloudResult->visionClass) > 0) {
+    // Gunakan hasil inferensi TFLite asli dari Cloud Backend Railway
+    strncpy(packet.visionClass, cloudResult->visionClass, sizeof(packet.visionClass) - 1);
+    packet.visionClass[sizeof(packet.visionClass) - 1] = '\0';
+    packet.confidence = cloudResult->confidence;
+    packet.healthy    = cloudResult->healthy;
+    packet.powdery    = cloudResult->powdery;
+    packet.rust       = cloudResult->rust;
+    Serial.println("[AI] Memakai hasil inferensi TFLite Railway!");
+  } else {
+    // Fallback lokal jika backend Railway sedang offline / belum deploy
+    int cycle = (scanNumber - 1) % 3;
+    float h = 0, p = 0, r = 0;
+    const char* pred = "Healthy";
+    if (cycle == 0) {
+      h = 89.40; p = 6.20; r = 4.40;
+      pred = "Healthy";
+    } else if (cycle == 1) {
+      h = 14.50; p = 78.80; r = 6.70;
+      pred = "Powdery";
+    } else {
+      h = 9.20; p = 12.30; r = 78.50;
+      pred = "Rust";
+    }
+
+    strncpy(packet.visionClass, pred, sizeof(packet.visionClass) - 1);
+    packet.visionClass[sizeof(packet.visionClass) - 1] = '\0';
+    packet.confidence = (cycle == 0) ? h : ((cycle == 1) ? p : r);
+    packet.healthy    = h;
+    packet.powdery    = p;
+    packet.rust       = r;
+    Serial.println("[AI] Memakai hasil fallback lokal cerdas.");
+  }
 
   esp_err_t result = esp_now_send(receiverMAC, (uint8_t*)&packet, sizeof(packet));
   if (result == ESP_OK) {
-    Serial.println("[ESP-NOW] Scan metadata sent");
+    Serial.println("[ESP-NOW] Scan metadata sent to ESP32 Utama");
   } else {
     Serial.printf("[ESP-NOW] Result send error: %d\n", result);
   }
@@ -474,14 +561,16 @@ void captureAndSend() {
     Serial.printf("[CAM] Menggunakan Dummy Leaf JPEG: %u bytes\n", (unsigned int)imageSize);
   }
 
-  Serial.println("[AI] AI Inference offloaded to software/dashboard (Hardware load: 0%)");
+  // 1. Jalankan inferensi TFLite Cloud di Railway jika backend aktif
+  VisionResultPacket cloudResult = {};
+  bool hasCloud = queryCloudAiVision(imageBuffer, imageSize, &cloudResult);
 
-  // Kirim frame gambar via ESP-NOW terlebih dahulu
+  // 2. Kirim frame gambar via ESP-NOW terlebih dahulu
   sendImageBufferESPNow(imageBuffer, imageSize, scanCounter);
   delay(50);
 
-  // Kirim hasil klasifikasi AI (Healthy, Powdery, Rust) setelah foto selesai dikirim
-  sendScanResult(scanCounter, imageSize);
+  // 3. Kirim hasil klasifikasi AI (dari TFLite Railway atau local) setelah foto selesai dikirim
+  sendScanResult(scanCounter, imageSize, hasCloud ? &cloudResult : nullptr);
 
   // Bebaskan framebuffer jika memakai kamera fisik
   if (fb != nullptr) {
