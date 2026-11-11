@@ -31,7 +31,7 @@ Pasang library Arduino `DHT sensor library`, `PubSubClient`, dan `ArduTFLite` be
 
 ## Firmware production FLORA
 
-Gunakan `esp32_main/esp32_main.ino` pada ESP32 utama (MAC `8C:AA:B5:37:71:18`) dan `esp32_cam/esp32_cam.ino` pada AI Thinker ESP32-CAM (MAC `F8:B3:B7:A6:F3:9C`). Kedua perangkat harus berada pada Wi-Fi channel **1**. MAC target utama sudah terpasang di sketch CAM sebagai `{ 0x8C, 0xAA, 0xB5, 0x37, 0x71, 0x18 }`.
+Gunakan `esp32_main/esp32_main.ino` pada ESP32 utama (MAC `8C:AA:B5:37:71:18`) dan `esp32_cam/esp32_cam.ino` pada AI Thinker ESP32-CAM (MAC `F8:B3:B7:A6:F3:9C`). Kedua perangkat harus berada pada Wi-Fi channel yang sama (Channel 6 / mengikuti Access Point secara otomatis). MAC target utama sudah terpasang di sketch CAM sebagai `{ 0x8C, 0xAA, 0xB5, 0x37, 0x71, 0x18 }`.
 
 Kontrol dashboard memakai `grenvis/device/control`: `L` (kiri), `R` (kanan), `S` (stop), dan `C` (ambil foto). Main meneruskan `C` ke CAM lewat ESP-NOW; JPEG yang selesai diterima dipublikasikan sebagai biner ke `grenvis/vision/image`, kemudian ditampilkan oleh dashboard. Telemetri dan inferensi tetap ada pada `grenvis/sensor/data` serta `grenvis/vision/data`.
 
