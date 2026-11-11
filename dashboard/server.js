@@ -239,60 +239,6 @@ app.post('/api/watering', (req, res) => {
   const event = { id: Date.now(), timestamp: new Date().toISOString(), soil_before: latest?.soil_moisture ?? null, note: String(req.body.note || '').slice(0, 200) };
   wateringEvents.push(event); writeJson(wateringFile, wateringEvents); broadcast({type:'watering', data:event}); res.status(201).json(event);
 });
-let dummyFrames = [];
-try {
-  dummyFrames = require('./src/assets/dummyFrames.json');
-} catch (e) {
-  console.log('Dummy frames asset not loaded:', e.message);
-}
-let currentDummyIdx = 0;
-
-function triggerSoftwareVision() {
-  if (!dummyFrames || !dummyFrames.length) return null;
-  const frame = dummyFrames[currentDummyIdx % dummyFrames.length];
-  currentDummyIdx++;
-  const imgTs = new Date().toISOString();
-
-  if (history.length) {
-    const latest = history[history.length - 1];
-    latest.image_url = frame.imageUrl;
-    latest.image_timestamp = imgTs;
-    latest.vision_prediction = frame.prediction;
-    latest.vision_healthy = frame.healthy;
-    latest.vision_powdery = frame.powdery;
-    latest.vision_rust = frame.rust;
-    latest.vision_connected = true;
-    latest.vision_confidence = Math.max(frame.healthy, frame.powdery, frame.rust);
-  }
-
-  broadcast({ type: 'image', data: { image_url: frame.imageUrl, image_timestamp: imgTs } });
-  broadcast({ 
-    type: 'vision', 
-    data: {
-      vision_prediction: frame.prediction,
-      vision_healthy: frame.healthy,
-      vision_powdery: frame.powdery,
-      vision_rust: frame.rust,
-      vision_connected: true
-    } 
-  });
-  if (history.length) {
-    broadcast({ type: 'telemetry', data: history.at(-1) });
-  }
-
-  if (mqttClient && mqttState === 'CONNECTED') {
-    const visionTopic = process.env.MQTT_VISION_TOPIC || 'grenvis/vision/data';
-    mqttClient.publish(visionTopic, JSON.stringify({
-      prediction: frame.prediction,
-      healthy: frame.healthy,
-      powdery: frame.powdery,
-      rust: frame.rust,
-      confidence: Math.max(frame.healthy, frame.powdery, frame.rust)
-    }));
-  }
-
-  return frame;
-}
 
 app.post('/api/control', (req, res) => {
   const { command } = req.body || {};
@@ -305,13 +251,9 @@ app.post('/api/control', (req, res) => {
     'L': 'Left command sent',
     'R': 'Right command sent',
     'S': 'Stop command sent',
-    'C': 'Camera capture request sent'
+    'C': 'Camera capture request sent to ESP32-CAM'
   };
   const message = messages[command];
-
-  if (command === 'C') {
-    triggerSoftwareVision();
-  }
 
   if (mqttClient && mqttState === 'CONNECTED') {
     mqttClient.publish(controlTopic, command, { qos: 1 }, (err) => {
@@ -338,7 +280,7 @@ wss.on('connection', (client) => {
 });
 function broadcast(message) { const text = JSON.stringify(message); for (const client of wss.clients) if (client.readyState === 1) client.send(text); }
 
-const mqttUrl = process.env.MQTT_URL || 'wss://m2da914a.ala.eu-central-1.emqxsl.com:8084/mqtt';
+const mqttUrl = process.env.MQTT_URL || 'wss://q663660b.ala.asia-southeast1.emqxsl.com:8084/mqtt';
 if (mqttUrl) {
   mqttClient = mqtt.connect(mqttUrl, {
     username: process.env.MQTT_USERNAME || 'grenvis_esp32',
@@ -365,10 +307,6 @@ if (mqttUrl) {
     if (topic === (process.env.MQTT_STATUS_TOPIC || 'grenvis/sensor/status')) return;
 
     if (topic === (process.env.MQTT_CONTROL_TOPIC || 'grenvis/device/control')) {
-      const cmd = buffer.toString().trim();
-      if (cmd === 'C' || cmd === 'c') {
-        triggerSoftwareVision();
-      }
       return;
     }
 
@@ -412,10 +350,4 @@ if (mqttUrl) {
   console.log('MQTT nonaktif: isi MQTT_URL di dashboard/.env untuk menghubungkan broker.');
 }
 
-if (String(process.env.DEMO_MODE || 'true') === 'true' && !history.length) {
-  const samples = 36;
-  for (let i = samples; i > 0; i--) {
-    const x = samples - i;
-    ingest({ timestamp: new Date(Date.now() - i * 5 * 60000).toISOString(), temperature: 29 + x * .08 + Math.sin(x)*.5, humidity: 72 - x*.2, soil_moisture: 68 - x*1.15, sensor_risk: x > 27 ? 'High' : 'Moderate', sensor_confidence: 94.2, high_probability: x > 27 ? 91 : 3, low_probability: 2, moderate_probability: x > 27 ? 7 : 95, vision_connected: true, vision_healthy: Math.max(8, 42-x*.7), vision_powdery: 12+x*.15, vision_rust: 46+x*.55, vision_prediction: 'Rust', esp32_mac:'AA:BB:CC:11:22:33', esp32cam_mac:'DD:EE:FF:44:55:66', wifi_channel:6, uptime_seconds:x*300 });
-  }
-}
+

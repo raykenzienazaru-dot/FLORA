@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   DashboardState,
+  TelemetryRecord,
   WebSocketMessage,
   RealtimeSystemState,
   SystemStatusInfo,
@@ -11,6 +12,7 @@ import { evaluateSystemAlert } from '../utils/sensorRules';
 import { useWebSocket } from './useWebSocket';
 import { deviceMqtt } from '../services/deviceMqtt';
 import { appendLocalTelemetry, mergeLatestLocalTelemetry, readLocalHistory, summarizeLocalHistory } from '../services/localHistory';
+import { enrichWithSoftwareAi } from '../services/softwareAi';
 
 interface UseDashboardReturn {
   data: DashboardState | null;
@@ -150,16 +152,35 @@ export function useDashboard(onToast?: (msg: string) => void): UseDashboardRetur
         });
       } else if (msg.type === 'vision') {
         setData((prev) => {
-          if (!prev?.latest) return prev;
-          const latest = { ...prev.latest, ...msg.data, vision_connected: true, timestamp: prev.latest.timestamp };
+          const base: TelemetryRecord = prev?.latest || enrichWithSoftwareAi(msg.data as Record<string, unknown>);
+          const latest: TelemetryRecord = { ...base, ...msg.data, vision_connected: true, timestamp: prev?.latest?.timestamp || base.timestamp };
           const history = mergeLatestLocalTelemetry(latest);
-          return { ...prev, latest, history, summary: summarizeLocalHistory(history, prev.wateringEvents.length) };
+          return {
+            latest,
+            history: history.length ? history : [latest],
+            summary: summarizeLocalHistory(history.length ? history : [latest], prev?.wateringEvents?.length || 0),
+            mqtt: prev?.mqtt || 'CONNECTED',
+            lastTelemetryAt: latest.timestamp,
+            config: prev?.config || {
+              soilDry: 30,
+              soilVeryDry: 20,
+              soilWet: 80,
+              tempHigh: 35,
+              humidityLow: 45,
+              humidityHigh: 80,
+              consecutive: 3,
+            },
+            wateringEvents: prev?.wateringEvents || [],
+          };
         });
       } else if (msg.type === 'image') {
-        setData((prev) => prev?.latest ? {
-          ...prev,
-          latest: { ...prev.latest, ...msg.data },
-        } : prev);
+        setData((prev) => {
+          if (!prev?.latest) return prev;
+          return {
+            ...prev,
+            latest: { ...prev.latest, ...msg.data },
+          };
+        });
       } else if (msg.type === 'watering') {
         loadData();
       }

@@ -136,7 +136,7 @@ export const AiVisionPanel: React.FC<AiVisionPanelProps> = ({ latest }) => {
           Klasifikasi visual diproses berdasarkan fitur model <code className="text-[#597C00] font-mono text-[10px]">AI_VISION.tflite</code> (fitur kelas: Healthy, Powdery Mildew, Leaf Rust) untuk pemantauan dini kesehatan kanopi daun.
         </p>
         <a
-          href="https://web-production-e0039.up.railway.app/docs"
+          href="https://web-production-0ef4.up.railway.app/docs"
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-1 text-[10px] font-bold text-[#597C00] hover:text-[#425C00] bg-[#EAF4E8] hover:bg-[#DDF0D9] px-2.5 py-1 rounded-lg border border-[#C4E1BF] transition-colors"

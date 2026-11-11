@@ -33,7 +33,18 @@ const direction = (rows: TelemetryRecord[], field: keyof TelemetryRecord) => {
 export function readLocalHistory(): TelemetryRecord[] {
   try {
     const stored = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
-    return Array.isArray(stored) ? stored.filter((row): row is TelemetryRecord => Boolean(row?.timestamp)).slice(-MAX_LOCAL_RECORDS) : [];
+    if (!Array.isArray(stored)) return [];
+    // Buang record demo/dummy lama agar data sensor riil tidak tertutup data palsu
+    const cleaned = stored.filter(
+      (row): row is TelemetryRecord =>
+        Boolean(row?.timestamp) &&
+        row.esp32_mac !== 'AA:BB:CC:11:22:33' &&
+        row.esp32cam_mac !== 'DD:EE:FF:44:55:66'
+    ).slice(-MAX_LOCAL_RECORDS);
+    if (cleaned.length !== stored.length) {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(cleaned));
+    }
+    return cleaned;
   } catch {
     return [];
   }

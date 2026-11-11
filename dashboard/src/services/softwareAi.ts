@@ -322,18 +322,18 @@ export function enrichWithSoftwareAi(
   raw: Record<string, unknown>,
   cfg?: ThresholdConfig
 ): TelemetryRecord {
-  const temp = Number(raw.temperature ?? 25);
-  const hum = Number(raw.humidity ?? 60);
-  const soil = Number(raw.soil_moisture ?? 50);
+  const temp = raw.temperature !== undefined && raw.temperature !== null ? Number(raw.temperature) : 0;
+  const hum = raw.humidity !== undefined && raw.humidity !== null ? Number(raw.humidity) : 0;
+  const soil = raw.soil_moisture !== undefined && raw.soil_moisture !== null ? Number(raw.soil_moisture) : 0;
 
-  // 1. Execute Software Neural Network Model
+  // 1. Execute Software Neural Network Model (only if sensors are active)
   const mlResult = runSoftwareEnvironmentalAi(temp, hum, soil);
 
-  // 2. Vision properties
-  const visionPred = String(raw.vision_prediction ?? raw.prediction ?? 'Healthy');
-  const healthy = Number(raw.vision_healthy ?? (visionPred.toLowerCase() === 'healthy' ? 95 : 5));
-  const powdery = Number(raw.vision_powdery ?? (visionPred.toLowerCase() === 'powdery' ? 90 : 5));
-  const rust = Number(raw.vision_rust ?? (visionPred.toLowerCase() === 'rust' ? 92 : 3));
+  // 2. Vision properties (Real hardware telemetry only, NO dummy defaults!)
+  const visionPred = String(raw.vision_prediction ?? raw.prediction ?? (raw.vision_connected ? 'Unknown' : ''));
+  const healthy = raw.vision_healthy !== undefined && raw.vision_healthy !== null ? Number(raw.vision_healthy) : 0;
+  const powdery = raw.vision_powdery !== undefined && raw.vision_powdery !== null ? Number(raw.vision_powdery) : 0;
+  const rust = raw.vision_rust !== undefined && raw.vision_rust !== null ? Number(raw.vision_rust) : 0;
 
   // 3. Smart Handling & Protocols
   const handling = evaluateConditionAndHandling(

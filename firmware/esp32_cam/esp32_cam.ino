@@ -11,11 +11,11 @@
 // =====================================================
 // TFLITE CLOUD AI BACKEND (RAILWAY / PUBLIC API)
 // =====================================================
-// API Base URL: https://web-production-e0039.up.railway.app/
-// Swagger Docs: https://web-production-e0039.up.railway.app/docs
-// Endpoint: https://web-production-e0039.up.railway.app/predict
+// API Base URL: https://web-production-0ef4.up.railway.app/
+// Swagger Docs: https://web-production-0ef4.up.railway.app/docs
+// Endpoint: https://web-production-0ef4.up.railway.app/predict
 // Kirim citra daun asli langsung dari kamera OV2640 ke model AI_VISION.tflite
-const char* AI_BACKEND_URL = "https://web-production-e0039.up.railway.app/predict";
+const char* AI_BACKEND_URL = "https://web-production-0ef4.up.railway.app/predict";
 
 // =====================================================
 // AI THINKER ESP32-CAM PIN DEFINITIONS
@@ -123,6 +123,7 @@ typedef struct __attribute__((packed)) {
 // =====================================================
 // IMAGE END PACKET
 // =====================================================
+
 
 typedef struct __attribute__((packed)) {
   uint8_t packetType;
