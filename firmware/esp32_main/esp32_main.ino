@@ -63,14 +63,14 @@ PubSubClient mqttClient(secureClient);
 // PIN & SENSOR CONFIGURATION
 // ======================================================
 
-// DHT Sensor (GPIO 19)
+// DHT Sensor (GPIO 18)
 // Mendukung DHT22 (default) & DHT11 secara bergantian otomatis tanpa tabrakan pin
-#define DHT_PIN 19
+#define DHT_PIN 18
 uint8_t dhtType = DHT22;
 DHT dht(DHT_PIN, DHT22);
 
 // Soil Moisture Sensor (GPIO 34 ADC1_CH6)
-#define SOIL_PIN 34
+#define SOIL_PIN 32
 
 // Kalibrasi Nilai ADC Sensor Tanah:
 // Kapasitif v1.2: RAW besar = KERING (udara bebas), RAW kecil = BASAH (air)
@@ -103,8 +103,8 @@ MotorState motorState = MOTOR_STOPPED;
 // ======================================================
 // LIMIT SWITCH
 // ======================================================
-#define LIMIT_LEFT 32
-#define LIMIT_RIGHT 33
+#define LIMIT_LEFT 25
+#define LIMIT_RIGHT 26
 
 // Polaritas Limit Switch:
 // LOW  = Normally Open (NO) switch ke GND (default INPUT_PULLUP)
@@ -325,6 +325,14 @@ void checkLimitSwitch() {
 
 void readDHT() {
   static int dhtFailStreak = 0;
+  static unsigned long lastDhtAttempt = 0;
+
+  // Sensor DHT membutuhkan jeda minimal 2 detik antar pembacaan fisik
+  if (millis() - lastDhtAttempt < 2000 && lastDhtAttempt != 0) {
+    return;
+  }
+  lastDhtAttempt = millis();
+
   float t = dht.readTemperature();
   float h = dht.readHumidity();
 
@@ -870,6 +878,20 @@ void handleSerial() {
   } else if (command == 'F' || command == 'f') {
     Serial.println(">>> Pemicu jepretan foto kamera dikirim manual via Serial! <<<");
     triggerCameraCapture();
+  } else if (command == '1') {
+    dhtType = DHT11;
+    dht = DHT(DHT_PIN, DHT11);
+    dht.begin();
+    Serial.println(">>> MODE DHT DIPAKSA KE: DHT11 (Sensor Warna Biru) <<<");
+    readDHT();
+    printSensorData();
+  } else if (command == '2') {
+    dhtType = DHT22;
+    dht = DHT(DHT_PIN, DHT22);
+    dht.begin();
+    Serial.println(">>> MODE DHT DIPAKSA KE: DHT22 (Sensor Warna Putih AM2302) <<<");
+    readDHT();
+    printSensorData();
   }
 }
 
@@ -953,6 +975,8 @@ void setup() {
   Serial.println("D = Baca langsung DHT & sensor tanah sekarang");
   Serial.println("C = Kalibrasi nilai RAW saat ini sebagai KERING");
   Serial.println("W = Kalibrasi nilai RAW saat ini sebagai BASAH");
+  Serial.println("1 = Paksa protokol DHT11 (Sensor Warna Biru)");
+  Serial.println("2 = Paksa protokol DHT22 (Sensor Warna Putih AM2302)");
   Serial.println("F = Pemicu jepretan kamera ke ESP32-CAM");
   Serial.println("========================================");
 }
