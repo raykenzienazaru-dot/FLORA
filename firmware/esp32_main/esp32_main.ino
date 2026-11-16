@@ -72,12 +72,12 @@ DHT dht(DHT_PIN, DHT22);
 // Soil Moisture Sensor (GPIO 32 ADC1_CH4)
 #define SOIL_PIN 32
 
-// Kalibrasi Nilai ADC Sensor Tanah (Kapasitif v1.2 bertenaga 5V):
-// Daya 5V: di udara terbuka membaca ~3900 - 4095 (kering = 0%)
-// Saat dicelupkan ke air: membaca ~1500 - 2200 (basah = 100%)
+// Kalibrasi Nilai ADC Sensor Tanah (Kapasitif v1.2 bertenaga 3.3V):
+// Daya 3.3V: di udara terbuka membaca ~2800 - 3200 (kering = 0%)
+// Saat dicelupkan ke air: membaca ~1100 - 1450 (basah = 100%)
 // Nilai ini dapat dikalibrasi via perintah Serial 'C' (kering) dan 'W' (basah)
-int soilDry = 4000;
-int soilWet = 1600;
+int soilDry = 3000;
+int soilWet = 1350;
 
 float soilMoisture = 0.0;
 int soilRaw = 0;
@@ -324,16 +324,16 @@ void checkLimitSwitch() {
 // READ SENSORS (PURE HARDWARE - ZERO DUMMY FALLBACK)
 // ======================================================
 
-// Pembaca bit-bang presisi mikrosekon khusus DHT22 pada ESP32 (anti gangguan interrupt WiFi)
-bool readDHT22Direct(uint8_t pin, float &temp, float &hum) {
+// Pembaca bit-bang presisi mikrosekon untuk DHT22/DHT11 pada ESP32 (anti gangguan interrupt WiFi)
+bool readDHTDirect(uint8_t pin, float &temp, float &hum) {
   uint8_t data[5] = {0, 0, 0, 0, 0};
 
-  // 1. Kirim start pulse ke DHT22: tarik LOW selama 3ms lalu lepaskan ke HIGH
-  pinMode(pin, OUTPUT_OPEN_DRAIN);
+  // 1. Kirim start pulse: tarik LOW minimal 20ms (kompatibel DHT11 & DHT22 di daya 3.3V/5V)
+  pinMode(pin, OUTPUT);
   digitalWrite(pin, LOW);
-  delay(3);
+  delay(20);
   digitalWrite(pin, HIGH);
-  delayMicroseconds(30);
+  delayMicroseconds(35);
 
   // 2. Siapkan pin mendengarkan respon sensor
   pinMode(pin, INPUT_PULLUP);
@@ -343,21 +343,21 @@ bool readDHT22Direct(uint8_t pin, float &temp, float &hum) {
   portENTER_CRITICAL(&mux);
 
   // Tunggu sensor menarik LOW (80us)
-  uint32_t timeout = 2500;
+  uint32_t timeout = 3000;
   while (digitalRead(pin) == HIGH) {
     if (--timeout == 0) { portEXIT_CRITICAL(&mux); return false; }
     delayMicroseconds(1);
   }
 
   // Tunggu sensor menarik HIGH (80us)
-  timeout = 2500;
+  timeout = 3000;
   while (digitalRead(pin) == LOW) {
     if (--timeout == 0) { portEXIT_CRITICAL(&mux); return false; }
     delayMicroseconds(1);
   }
 
   // Tunggu sensor mengakhiri respon HIGH
-  timeout = 2500;
+  timeout = 3000;
   while (digitalRead(pin) == HIGH) {
     if (--timeout == 0) { portEXIT_CRITICAL(&mux); return false; }
     delayMicroseconds(1);
@@ -366,7 +366,7 @@ bool readDHT22Direct(uint8_t pin, float &temp, float &hum) {
   // 3. Baca 40 bit data
   for (int i = 0; i < 40; i++) {
     // Tunggu sinyal awal bit (LOW ~50us)
-    timeout = 2500;
+    timeout = 3000;
     while (digitalRead(pin) == LOW) {
       if (--timeout == 0) { portEXIT_CRITICAL(&mux); return false; }
       delayMicroseconds(1);
@@ -374,7 +374,7 @@ bool readDHT22Direct(uint8_t pin, float &temp, float &hum) {
 
     // Ukur durasi pulsa HIGH: 26-28us = '0', 70us = '1'
     uint32_t tStart = micros();
-    timeout = 2500;
+    timeout = 3000;
     while (digitalRead(pin) == HIGH) {
       if (--timeout == 0) { portEXIT_CRITICAL(&mux); return false; }
       delayMicroseconds(1);
@@ -394,13 +394,19 @@ bool readDHT22Direct(uint8_t pin, float &temp, float &hum) {
     return false;
   }
 
-  // 5. Decode data DHT22 (AM2302)
-  uint16_t rawHum = ((uint16_t)data[0] << 8) | data[1];
-  int16_t rawTemp = (((int16_t)(data[2] & 0x7F)) << 8) | data[3];
-  if (data[2] & 0x80) rawTemp = -rawTemp;
+  // 5. Decode data sesuai tipe sensor yang aktif
+  if (dhtType == DHT11) {
+    hum = (float)data[0] + (float)data[1] * 0.1f;
+    temp = (float)data[2] + (float)data[3] * 0.1f;
+  } else {
+    // DHT22 (AM2302)
+    uint16_t rawHum = ((uint16_t)data[0] << 8) | data[1];
+    int16_t rawTemp = (((int16_t)(data[2] & 0x7F)) << 8) | data[3];
+    if (data[2] & 0x80) rawTemp = -rawTemp;
 
-  hum = (float)rawHum * 0.1f;
-  temp = (float)rawTemp * 0.1f;
+    hum = (float)rawHum * 0.1f;
+    temp = (float)rawTemp * 0.1f;
+  }
 
   return (hum >= 0.0f && hum <= 100.0f && temp >= -40.0f && temp <= 80.0f);
 }
@@ -418,30 +424,29 @@ void readDHT() {
   float t = NAN;
   float h = NAN;
 
-  // Coba metode 1: Library Adafruit
-  t = dht.readTemperature();
-  h = dht.readHumidity();
-
-  // Jika metode 1 gagal (sering terjadi akibat interrupt ESP32), gunakan metode 2 (Direct Bit-Bang)
-  if (isnan(t) || isnan(h)) {
-    float tDirect = 0.0;
-    float hDirect = 0.0;
-    if (readDHT22Direct(DHT_PIN, tDirect, hDirect)) {
-      t = tDirect;
-      h = hDirect;
-    }
+  // Coba metode 1 (Utama): Direct Bit-Bang dengan portENTER_CRITICAL (paling stabil di ESP32)
+  float tDirect = 0.0;
+  float hDirect = 0.0;
+  if (readDHTDirect(DHT_PIN, tDirect, hDirect)) {
+    t = tDirect;
+    h = hDirect;
+  } else {
+    // Coba metode 2 (Fallback): Library Adafruit
+    t = dht.readTemperature();
+    h = dht.readHumidity();
   }
 
   if (!isnan(t) && !isnan(h) && t > -40.0 && t < 85.0 && h >= 0.0 && h <= 100.0) {
     currentTemperature = t;
     currentHumidity = h;
     dhtFailStreak = 0;
-    Serial.printf("[DHT22] SUKSES: Suhu = %.2f C | Kelembapan = %.2f %%\n", currentTemperature, currentHumidity);
+    Serial.printf("[%s] SUKSES: Suhu = %.2f C | Kelembapan = %.2f %%\n",
+                  dhtType == DHT22 ? "DHT22" : "DHT11", currentTemperature, currentHumidity);
   } else {
     dhtFailStreak++;
-    Serial.printf("[DHT22] Belum terbaca di GPIO %d (streak: %d). Murni tanpa dummy.\n",
-                  DHT_PIN, dhtFailStreak);
-    // Nilai suhu dan kelembapan riil dipertahankan (tidak di-overwrite ke 28.0C / 60.0%)!
+    Serial.printf("[%s] Belum terbaca di GPIO %d (streak: %d). Murni tanpa dummy.\n",
+                  dhtType == DHT22 ? "DHT22" : "DHT11", DHT_PIN, dhtFailStreak);
+    // Nilai suhu dan kelembapan riil dipertahankan (tidak di-overwrite ke dummy 28.0C / 60.0%)!
   }
 }
 
