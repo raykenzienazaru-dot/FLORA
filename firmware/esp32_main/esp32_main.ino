@@ -72,12 +72,13 @@ DHT dht(DHT_PIN, DHT22);
 // Soil Moisture Sensor (GPIO 32 ADC1_CH4)
 #define SOIL_PIN 32
 
-// Kalibrasi Nilai ADC Sensor Tanah (Kapasitif v1.2 bertenaga 3.3V):
-// Daya 3.3V: di udara terbuka membaca ~2800 - 3200 (kering = 0%)
-// Saat dicelupkan ke air: membaca ~1100 - 1450 (basah = 100%)
+// Kalibrasi Nilai ADC Sensor Tanah (Kapasitif v1.2 bertenaga 5V):
+// Daya 5V: di udara terbuka membaca ~3900 - 4095 (kering = 0%)
+// Saat dicelupkan ke air: membaca ~1500 - 2200 (basah = 100%)
 // Nilai ini dapat dikalibrasi via perintah Serial 'C' (kering) dan 'W' (basah)
-int soilDry = 3000;
-int soilWet = 1350;
+// Atau langsung aktifkan preset via tombol '5' (5V) atau '3' (3.3V)
+int soilDry = 4000;
+int soilWet = 1600;
 
 float soilMoisture = 0.0;
 int soilRaw = 0;
@@ -977,6 +978,18 @@ void handleSerial() {
     Serial.println(">>> MODE DHT DIPAKSA KE: DHT22 (Sensor Warna Putih AM2302) <<<");
     readDHT();
     printSensorData();
+  } else if (command == '5') {
+    soilDry = 4000;
+    soilWet = 1600;
+    Serial.println(">>> PRESET KALIBRASI SENSOR 5V DIAKTIFKAN: Kering=4000, Basah=1600 <<<");
+    readSoil();
+    printSensorData();
+  } else if (command == '3') {
+    soilDry = 3000;
+    soilWet = 1350;
+    Serial.println(">>> PRESET KALIBRASI SENSOR 3.3V DIAKTIFKAN: Kering=3000, Basah=1350 <<<");
+    readSoil();
+    printSensorData();
   }
 }
 
@@ -1062,6 +1075,8 @@ void setup() {
   Serial.println("W = Kalibrasi nilai RAW saat ini sebagai BASAH");
   Serial.println("1 = Paksa protokol DHT11 (Sensor Warna Biru)");
   Serial.println("2 = Paksa protokol DHT22 (Sensor Warna Putih AM2302)");
+  Serial.println("5 = Atur preset ambang batas sensor tanah daya 5V (default)");
+  Serial.println("3 = Atur preset ambang batas sensor tanah daya 3.3V");
   Serial.println("F = Pemicu jepretan kamera ke ESP32-CAM");
   Serial.println("========================================");
 }

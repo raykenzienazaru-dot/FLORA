@@ -35,4 +35,10 @@ Gunakan `esp32_main/esp32_main.ino` pada ESP32 utama (MAC `8C:AA:B5:37:71:18`) d
 
 Kontrol dashboard memakai `grenvis/device/control`: `L` (kiri), `R` (kanan), `S` (stop), dan `C` (ambil foto). Main meneruskan `C` ke CAM lewat ESP-NOW; JPEG yang selesai diterima dipublikasikan sebagai biner ke `grenvis/vision/image`, kemudian ditampilkan oleh dashboard. Telemetri dan inferensi tetap ada pada `grenvis/sensor/data` serta `grenvis/vision/data`.
 
-Wiring main: DHT22 GPIO 19, soil GPIO 34, L298N IN1 GPIO 16 / IN2 GPIO 17, limit kiri GPIO 32 dan limit kanan GPIO 33.
+Wiring main:
+- DHT22 (AM2302): DATA ke GPIO 18, VCC ke 5V (VIN), GND ke GND.
+- Capacitive Soil Sensor v1.2: AOUT ke GPIO 32, VCC ke 5V (VIN), GND ke GND (Kalibrasi 5V: Kering ~4000 = 0%, Basah ~1600 = 100%).
+- L298N Motor Driver: IN1 ke GPIO 16, IN2 ke GPIO 17, motor pada terminal OUT3 & OUT4. Common GND wajib terhubung antara ESP32 dan L298N.
+- Limit Switch Kiri: GPIO 25 ke GND (Internal INPUT_PULLUP, Active-LOW).
+- Limit Switch Kanan: GPIO 26 ke GND (Internal INPUT_PULLUP, Active-LOW).
+- ESP-NOW & Wi-Fi: Channel 6 (SSID: `.`, Access Point default).
