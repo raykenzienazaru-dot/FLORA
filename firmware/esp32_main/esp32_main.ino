@@ -69,14 +69,15 @@ PubSubClient mqttClient(secureClient);
 uint8_t dhtType = DHT22;
 DHT dht(DHT_PIN, DHT22);
 
-// Soil Moisture Sensor (GPIO 34 ADC1_CH6)
+// Soil Moisture Sensor (GPIO 32 ADC1_CH4)
 #define SOIL_PIN 32
 
-// Kalibrasi Nilai ADC Sensor Tanah:
-// Kapasitif v1.2: RAW besar = KERING (udara bebas), RAW kecil = BASAH (air)
+// Kalibrasi Nilai ADC Sensor Tanah (Kapasitif v1.2 bertenaga 5V):
+// Daya 5V: di udara terbuka membaca ~3900 - 4095 (kering = 0%)
+// Saat dicelupkan ke air: membaca ~1500 - 2200 (basah = 100%)
 // Nilai ini dapat dikalibrasi via perintah Serial 'C' (kering) dan 'W' (basah)
-int soilDry = 3100;
-int soilWet = 1350;
+int soilDry = 4000;
+int soilWet = 1600;
 
 float soilMoisture = 0.0;
 int soilRaw = 0;
@@ -323,6 +324,87 @@ void checkLimitSwitch() {
 // READ SENSORS (PURE HARDWARE - ZERO DUMMY FALLBACK)
 // ======================================================
 
+// Pembaca bit-bang presisi mikrosekon khusus DHT22 pada ESP32 (anti gangguan interrupt WiFi)
+bool readDHT22Direct(uint8_t pin, float &temp, float &hum) {
+  uint8_t data[5] = {0, 0, 0, 0, 0};
+
+  // 1. Kirim start pulse ke DHT22: tarik LOW selama 3ms lalu lepaskan ke HIGH
+  pinMode(pin, OUTPUT_OPEN_DRAIN);
+  digitalWrite(pin, LOW);
+  delay(3);
+  digitalWrite(pin, HIGH);
+  delayMicroseconds(30);
+
+  // 2. Siapkan pin mendengarkan respon sensor
+  pinMode(pin, INPUT_PULLUP);
+
+  // Kunci interrupt sementara agar timing mikrosekon tidak diputus oleh stack WiFi/RTOS
+  portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+  portENTER_CRITICAL(&mux);
+
+  // Tunggu sensor menarik LOW (80us)
+  uint32_t timeout = 2500;
+  while (digitalRead(pin) == HIGH) {
+    if (--timeout == 0) { portEXIT_CRITICAL(&mux); return false; }
+    delayMicroseconds(1);
+  }
+
+  // Tunggu sensor menarik HIGH (80us)
+  timeout = 2500;
+  while (digitalRead(pin) == LOW) {
+    if (--timeout == 0) { portEXIT_CRITICAL(&mux); return false; }
+    delayMicroseconds(1);
+  }
+
+  // Tunggu sensor mengakhiri respon HIGH
+  timeout = 2500;
+  while (digitalRead(pin) == HIGH) {
+    if (--timeout == 0) { portEXIT_CRITICAL(&mux); return false; }
+    delayMicroseconds(1);
+  }
+
+  // 3. Baca 40 bit data
+  for (int i = 0; i < 40; i++) {
+    // Tunggu sinyal awal bit (LOW ~50us)
+    timeout = 2500;
+    while (digitalRead(pin) == LOW) {
+      if (--timeout == 0) { portEXIT_CRITICAL(&mux); return false; }
+      delayMicroseconds(1);
+    }
+
+    // Ukur durasi pulsa HIGH: 26-28us = '0', 70us = '1'
+    uint32_t tStart = micros();
+    timeout = 2500;
+    while (digitalRead(pin) == HIGH) {
+      if (--timeout == 0) { portEXIT_CRITICAL(&mux); return false; }
+      delayMicroseconds(1);
+    }
+    uint32_t pulseDuration = micros() - tStart;
+
+    if (pulseDuration > 40) {
+      data[i / 8] |= (1 << (7 - (i % 8)));
+    }
+  }
+
+  portEXIT_CRITICAL(&mux);
+
+  // 4. Verifikasi checksum 8-bit
+  uint8_t checksum = (data[0] + data[1] + data[2] + data[3]) & 0xFF;
+  if (data[4] != checksum) {
+    return false;
+  }
+
+  // 5. Decode data DHT22 (AM2302)
+  uint16_t rawHum = ((uint16_t)data[0] << 8) | data[1];
+  int16_t rawTemp = (((int16_t)(data[2] & 0x7F)) << 8) | data[3];
+  if (data[2] & 0x80) rawTemp = -rawTemp;
+
+  hum = (float)rawHum * 0.1f;
+  temp = (float)rawTemp * 0.1f;
+
+  return (hum >= 0.0f && hum <= 100.0f && temp >= -40.0f && temp <= 80.0f);
+}
+
 void readDHT() {
   static int dhtFailStreak = 0;
   static unsigned long lastDhtAttempt = 0;
@@ -333,26 +415,32 @@ void readDHT() {
   }
   lastDhtAttempt = millis();
 
-  float t = dht.readTemperature();
-  float h = dht.readHumidity();
+  float t = NAN;
+  float h = NAN;
+
+  // Coba metode 1: Library Adafruit
+  t = dht.readTemperature();
+  h = dht.readHumidity();
+
+  // Jika metode 1 gagal (sering terjadi akibat interrupt ESP32), gunakan metode 2 (Direct Bit-Bang)
+  if (isnan(t) || isnan(h)) {
+    float tDirect = 0.0;
+    float hDirect = 0.0;
+    if (readDHT22Direct(DHT_PIN, tDirect, hDirect)) {
+      t = tDirect;
+      h = hDirect;
+    }
+  }
 
   if (!isnan(t) && !isnan(h) && t > -40.0 && t < 85.0 && h >= 0.0 && h <= 100.0) {
     currentTemperature = t;
     currentHumidity = h;
     dhtFailStreak = 0;
+    Serial.printf("[DHT22] SUKSES: Suhu = %.2f C | Kelembapan = %.2f %%\n", currentTemperature, currentHumidity);
   } else {
     dhtFailStreak++;
-    Serial.printf("[DHT] Gagal membaca mode %s di GPIO %d (streak: %d). Murni tanpa dummy.\n",
-                  dhtType == DHT22 ? "DHT22" : "DHT11", DHT_PIN, dhtFailStreak);
-
-    // Beralih jenis sensor setelah 3x gagal beruntun
-    if (dhtFailStreak >= 3) {
-      dhtType = (dhtType == DHT22) ? DHT11 : DHT22;
-      Serial.printf("[DHT] Mencoba beralih ke protokol %s...\n", dhtType == DHT22 ? "DHT22" : "DHT11");
-      dht = DHT(DHT_PIN, dhtType);
-      dht.begin();
-      dhtFailStreak = 0;
-    }
+    Serial.printf("[DHT22] Belum terbaca di GPIO %d (streak: %d). Murni tanpa dummy.\n",
+                  DHT_PIN, dhtFailStreak);
     // Nilai suhu dan kelembapan riil dipertahankan (tidak di-overwrite ke 28.0C / 60.0%)!
   }
 }
@@ -372,16 +460,8 @@ void readSoil() {
     return;
   }
 
-  // Deteksi di udara terbuka (kering total)
-  if (soilRaw >= 4050) {
-    soilMoisture = 0.0;
-    Serial.printf("[SOIL] RAW: %d (Kering total di udara bebas) -> 0.0%%\n", soilRaw);
-    return;
-  }
-
-  // Pemetaan linier sesuai karakteristik sensor
+  // Pemetaan linier sesuai karakteristik sensor kapasitif v1.2 pada daya 5V
   if (soilDry > soilWet) {
-    // Sensor Kapasitif v1.2 (ADC tinggi = Kering, ADC rendah = Basah)
     if (soilRaw >= soilDry) {
       soilMoisture = 0.0;
     } else if (soilRaw <= soilWet) {
@@ -391,7 +471,6 @@ void readSoil() {
       soilMoisture = constrain(moisture, 0.0, 100.0);
     }
   } else {
-    // Sensor Resistif
     if (soilRaw <= soilDry) {
       soilMoisture = 0.0;
     } else if (soilRaw >= soilWet) {
@@ -402,7 +481,8 @@ void readSoil() {
     }
   }
 
-  Serial.printf("[SOIL] RAW: %d | Terbaca: %.1f%%\n", soilRaw, soilMoisture);
+  Serial.printf("[SOIL] RAW: %d | Terbaca: %.1f%% (Batas Kering: %d, Basah: %d)\n",
+                soilRaw, soilMoisture, soilDry, soilWet);
 }
 
 // ======================================================
