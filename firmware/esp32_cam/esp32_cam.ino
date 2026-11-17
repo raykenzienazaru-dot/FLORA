@@ -297,7 +297,7 @@ bool initESPNow() {
     Serial.printf("[WIFI] Menghubungkan ke AP '%s' untuk internet & channel...\n", WIFI_SSID);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     uint32_t startMs = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - startMs < 5000) {
+    while (WiFi.status() != WL_CONNECTED && millis() - startMs < 12000) {
       delay(250);
       Serial.print(".");
     }
@@ -306,7 +306,7 @@ bool initESPNow() {
       activeChannel = WiFi.channel();
       Serial.printf("[WIFI] Terhubung! IP: %s | Channel: %d\n", WiFi.localIP().toString().c_str(), activeChannel);
     } else {
-      Serial.printf("[WIFI] Belum terhubung. Menggunakan channel default: %d\n", ESP_NOW_CHANNEL);
+      Serial.printf("[WIFI] Belum terhubung (timeout). Menggunakan channel default: %d\n", ESP_NOW_CHANNEL);
       esp_wifi_set_channel(ESP_NOW_CHANNEL, WIFI_SECOND_CHAN_NONE);
     }
   } else {
@@ -621,6 +621,16 @@ void setup() {
 // =====================================================
 
 void loop() {
+  // Jaga koneksi WiFi tetap aktif agar inferensi TFLite Railway selalu siap
+  if (strlen(WIFI_SSID) > 0 && WiFi.status() != WL_CONNECTED) {
+    static unsigned long lastWifiCheck = 0;
+    if (millis() - lastWifiCheck > 10000) {
+      lastWifiCheck = millis();
+      Serial.println("[WIFI] Mencoba menyambung kembali ke AP...");
+      WiFi.reconnect();
+    }
+  }
+
   // 1. Trigger manual dari Serial Monitor PC (ketik 'A' lalu Enter)
   if (Serial.available()) {
     char cmd = Serial.read();
