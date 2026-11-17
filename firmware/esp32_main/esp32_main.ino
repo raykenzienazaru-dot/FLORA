@@ -86,11 +86,19 @@ int soilRaw = 0;
 // ======================================================
 // MOTOR DRIVER L298N
 // ======================================================
-// Motor terhubung ke terminal OUT3 & OUT4 pada L298N.
-// Sesuai konfigurasi hardware, kontrol tetap menggunakan pin input IN1 & IN2:
-// - GPIO 16 -> IN1 (atau IN3)
-// - GPIO 17 -> IN2 (atau IN4)
-// CATATAN: Jumper ENA/ENB wajib terpasang & GND ESP32 wajib digabung ke GND L298N!
+// PANDUAN PENTING KONEKSI L298N:
+// Modul L298N adalah Dual H-Bridge dengan 2 Channel terpisah:
+// - Channel A: Input IN1 & IN2 -> Menggerakkan terminal OUT1 & OUT2 (Jumper ENA wajib terpasang)
+// - Channel B: Input IN3 & IN4 -> Menggerakkan terminal OUT3 & OUT4 (Jumper ENB wajib terpasang)
+//
+// JIKA MOTOR DI TERMINAL BAUT OUT3 & OUT4:
+//   Kabel dari ESP32 GPIO 16 & GPIO 17 WAJIB DICOLOK KE PIN "IN3" & "IN4" PADA L298N!
+//   (Jika dicolok ke IN1 & IN2, arus hanya keluar ke OUT1/OUT2, terminal OUT3/OUT4 TIDAK AKAN HIDUP).
+// JIKA INGIN TETAP MENGGUNAKAN PIN "IN1" & "IN2":
+//   Pindahkan 2 kabel motor ke terminal baut "OUT1" & "OUT2"!
+// CATATAN WAJIB:
+// - GND ESP32 wajib digabung ke GND L298N (Common Ground).
+// - Jumper ENA (jika OUT1/OUT2) atau ENB (jika OUT3/OUT4) wajib terpasang.
 #define MOTOR_IN1 16
 #define MOTOR_IN2 17
 
@@ -113,12 +121,15 @@ MotorState motorState = MOTOR_STOPPED;
 // HIGH = Normally Closed (NC) atau Active HIGH
 // Dapat diubah langsung saat alat berjalan dengan mengetik 'P' di Serial Monitor
 uint8_t limitActiveLevel = LOW;
+bool limitSafetyBypass = false; // Ketik 'B' di Serial untuk bypass/abaikan limit switch saat uji motor
 
 inline bool isLimitLeftActive() {
+  if (limitSafetyBypass) return false;
   return digitalRead(LIMIT_LEFT) == limitActiveLevel;
 }
 
 inline bool isLimitRightActive() {
+  if (limitSafetyBypass) return false;
   return digitalRead(LIMIT_RIGHT) == limitActiveLevel;
 }
 
@@ -236,7 +247,7 @@ void motorStop() {
 
 void motorRight() {
   if (isLimitRightActive()) {
-    Serial.printf("[LIMIT BLOCKED] KANAN AKTIF (PIN %d RAW=%d)! Ketik 'P' di Serial jika polaritas terbalik.\n",
+    Serial.printf("[LIMIT BLOCKED] KANAN AKTIF (PIN %d RAW=%d)! Ketik 'P' di Serial jika polaritas terbalik, atau 'B' untuk bypass.\n",
                   LIMIT_RIGHT, digitalRead(LIMIT_RIGHT));
     motorStop();
     return;
@@ -244,12 +255,12 @@ void motorRight() {
   digitalWrite(MOTOR_IN1, HIGH);
   digitalWrite(MOTOR_IN2, LOW);
   motorState = MOTOR_RIGHT;
-  Serial.println("[MOTOR] >>> JALAN KANAN (IN1 HIGH, IN2 LOW)");
+  Serial.println("[MOTOR] >>> JALAN KANAN (PIN 16 HIGH, PIN 17 LOW)");
 }
 
 void motorLeft() {
   if (isLimitLeftActive()) {
-    Serial.printf("[LIMIT BLOCKED] KIRI AKTIF (PIN %d RAW=%d)! Ketik 'P' di Serial jika polaritas terbalik.\n",
+    Serial.printf("[LIMIT BLOCKED] KIRI AKTIF (PIN %d RAW=%d)! Ketik 'P' di Serial jika polaritas terbalik, atau 'B' untuk bypass.\n",
                   LIMIT_LEFT, digitalRead(LIMIT_LEFT));
     motorStop();
     return;
@@ -257,7 +268,7 @@ void motorLeft() {
   digitalWrite(MOTOR_IN1, LOW);
   digitalWrite(MOTOR_IN2, HIGH);
   motorState = MOTOR_LEFT;
-  Serial.println("[MOTOR] <<< JALAN KIRI (IN1 LOW, IN2 HIGH)");
+  Serial.println("[MOTOR] <<< JALAN KIRI (PIN 16 LOW, PIN 17 HIGH)");
 }
 
 // ======================================================
@@ -528,8 +539,24 @@ void connectWiFi() {
 
 void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   if (String(topic) != MQTT_TOPIC_CONTROL || length == 0) return;
-  const char command = payload[0];
-  Serial.printf("[MQTT] Perintah kontrol diterima: %c\n", command);
+
+  char msg[64];
+  size_t copyLen = length < 63 ? length : 63;
+  memcpy(msg, payload, copyLen);
+  msg[copyLen] = '\0';
+
+  char command = msg[0];
+
+  // Dukung JSON: {"command":"R"} atau {"action":"right"}
+  if (command == '{') {
+    String str = String(msg);
+    if (str.indexOf("\"R\"") != -1 || str.indexOf("\"r\"") != -1 || str.indexOf("\"right\"") != -1) command = 'R';
+    else if (str.indexOf("\"L\"") != -1 || str.indexOf("\"l\"") != -1 || str.indexOf("\"left\"") != -1) command = 'L';
+    else if (str.indexOf("\"S\"") != -1 || str.indexOf("\"s\"") != -1 || str.indexOf("\"stop\"") != -1) command = 'S';
+    else if (str.indexOf("\"C\"") != -1 || str.indexOf("\"c\"") != -1 || str.indexOf("\"capture\"") != -1) command = 'C';
+  }
+
+  Serial.printf("[MQTT] Perintah kontrol diterima: %c (payload: %s)\n", command, msg);
 
   if (command == 'L' || command == 'l') motorLeft();
   else if (command == 'R' || command == 'r') motorRight();
@@ -915,17 +942,28 @@ void handleSerial() {
     motorStop();
   } else if (command == 'T' || command == 't') {
     Serial.println();
-    Serial.println(">>> [UJI MOTOR L298N (BYPASS LIMIT SWITCH 1.5 DETIK)] <<<");
-    Serial.println("Memutar KANAN selama 1.5 detik...");
+    Serial.println("==================================================");
+    Serial.println(">>> UJI MOTOR L298N (BYPASS LIMIT SWITCH 1.5s) <<<");
+    Serial.println("==================================================");
+    Serial.println("INFO PIN: GPIO 16 & GPIO 17");
+    Serial.println("CATATAN: Jika motor di baut OUT3/OUT4, kabel ESP32 WAJIB ke IN3/IN4 (bukan IN1/IN2)!");
+    Serial.println("Pastikan jumper hitam ENB terpasang & GND L298N digabung ke GND ESP32.");
+    Serial.println("Memutar KANAN (PIN 16 HIGH, PIN 17 LOW) selama 1.5s...");
     digitalWrite(MOTOR_IN1, HIGH);
     digitalWrite(MOTOR_IN2, LOW);
     delay(1500);
-    Serial.println("Memutar KIRI selama 1.5 detik...");
+    Serial.println("Memutar KIRI (PIN 16 LOW, PIN 17 HIGH) selama 1.5s...");
     digitalWrite(MOTOR_IN1, LOW);
     digitalWrite(MOTOR_IN2, HIGH);
     delay(1500);
     motorStop();
     Serial.println(">>> Selesai uji motor. <<<");
+    Serial.println("==================================================");
+  } else if (command == 'B' || command == 'b') {
+    limitSafetyBypass = !limitSafetyBypass;
+    Serial.println();
+    Serial.printf(">>> LIMIT SWITCH SAFETY BYPASS: %s <<<\n",
+                  limitSafetyBypass ? "AKTIF (Limit Switch Diabaikan / Motor Bebas Berjalan)" : "NONAKTIF (Proteksi Limit Switch Aktif)");
   } else if (command == 'K' || command == 'k') {
     Serial.println();
     Serial.println("========================================");
@@ -1068,6 +1106,7 @@ void setup() {
   Serial.println("L = Motor jalan Kiri");
   Serial.println("S = Motor Stop");
   Serial.println("T = Uji jalan motor 1.5s kanan & kiri (bypass limit)");
+  Serial.println("B = Toggle Safety Bypass Limit Switch (Abaikan limit switch untuk uji motor)");
   Serial.println("K = Cek diagnosa limit switch");
   Serial.println("P = Balik polaritas limit switch (Active-LOW <-> Active-HIGH)");
   Serial.println("D = Baca langsung DHT & sensor tanah sekarang");
