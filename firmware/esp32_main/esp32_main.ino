@@ -279,6 +279,7 @@ void triggerCameraCapture() {
   const uint8_t request[] = { PACKET_CAPTURE_REQUEST };
   const uint8_t* target = hasLearnedCamMac ? targetCamMac : ESP32_CAM_MAC;
 
+  // 1. Kirim Unicast ke target MAC CAM
   if (!esp_now_is_peer_exist(target)) {
     esp_now_peer_info_t peer = {};
     memcpy(peer.peer_addr, target, 6);
@@ -287,12 +288,25 @@ void triggerCameraCapture() {
     peer.ifidx = WIFI_IF_STA;
     esp_now_add_peer(&peer);
   }
+  const esp_err_t resUni = esp_now_send(target, request, sizeof(request));
 
-  const esp_err_t result = esp_now_send(target, request, sizeof(request));
+  // 2. Kirim juga secara BROADCAST (FF:FF:FF:FF:FF:FF)
+  // Menjamin ESP32-CAM pasti menerima sinyal capture meskipun MAC CAM berbeda dari default!
+  const uint8_t BROADCAST_MAC[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+  if (!esp_now_is_peer_exist(BROADCAST_MAC)) {
+    esp_now_peer_info_t bcast = {};
+    memcpy(bcast.peer_addr, BROADCAST_MAC, 6);
+    bcast.channel = WiFi.channel();
+    bcast.encrypt = false;
+    bcast.ifidx = WIFI_IF_STA;
+    esp_now_add_peer(&bcast);
+  }
+  const esp_err_t resBcast = esp_now_send(BROADCAST_MAC, request, sizeof(request));
+
   Serial.println();
-  Serial.printf("[ESP-NOW] Kirim trigger foto ke ESP32-CAM (%02X:%02X:%02X:%02X:%02X:%02X): %s (kode: %d)\n",
-                target[0], target[1], target[2], target[3], target[4], target[5],
-                result == ESP_OK ? "BERHASIL" : "GAGAL", result);
+  Serial.printf("[ESP-NOW] Trigger foto dikirim ke ESP32-CAM (Unicast: %s, Broadcast: %s)\n",
+                resUni == ESP_OK ? "BERHASIL" : "GAGAL",
+                resBcast == ESP_OK ? "BERHASIL" : "GAGAL");
 }
 
 // ======================================================

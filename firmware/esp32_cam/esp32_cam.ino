@@ -332,8 +332,17 @@ bool initESPNow() {
   peerInfo.encrypt = false;
 
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
-    Serial.println("[ESP-NOW] Add peer FAILED!");
-    return false;
+    Serial.println("[ESP-NOW] Add peer ESP32-Main FAILED!");
+  }
+
+  // Tambahkan peer broadcast (FF:FF:FF:FF:FF:FF) agar siap menerima trigger foto kapan pun
+  const uint8_t BROADCAST_MAC[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+  if (!esp_now_is_peer_exist(BROADCAST_MAC)) {
+    esp_now_peer_info_t bcast = {};
+    memcpy(bcast.peer_addr, BROADCAST_MAC, 6);
+    bcast.channel = activeChannel;
+    bcast.encrypt = false;
+    esp_now_add_peer(&bcast);
   }
 
   Serial.println("[ESP-NOW] READY");
